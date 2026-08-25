@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import './App.css'
 import { EventStoreProvider, useEventStore, useTeams } from './store'
+import { GraphTab } from './Graph'
 
 type TabId = 'graph' | 'logs' | 'teams'
 
@@ -16,27 +17,6 @@ function ConnectionBadge() {
     <span className={`connection-badge connection-badge--${connectionStatus}`}>
       {connectionStatus === 'open' ? 'connected' : connectionStatus}
     </span>
-  )
-}
-
-function GraphTab() {
-  const { agents, toolCalls } = useEventStore()
-  const agentList = Object.values(agents)
-  const running = agentList.filter((a) => a.status === 'running').length
-
-  return (
-    <div>
-      <h2>Graph view — coming soon</h2>
-      <p>The agent interaction graph will render here once live data is wired up.</p>
-      <ul className="stat-list">
-        <li>
-          <strong>{agentList.length}</strong> agent{agentList.length === 1 ? '' : 's'} seen ({running} running)
-        </li>
-        <li>
-          <strong>{toolCalls.length}</strong> tool call{toolCalls.length === 1 ? '' : 's'} recorded
-        </li>
-      </ul>
-    </div>
   )
 }
 
