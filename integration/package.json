@@ -1,0 +1,11 @@
+{
+  "name": "@agentsviz/integration",
+  "private": true,
+  "version": "0.1.0",
+  "description": "End-to-end integration test: simulates a real multi-agent run through the instrumentation helper against the real event server, and asserts the server's state store reflects it accurately.",
+  "type": "module",
+  "scripts": {
+    "test:e2e": "npm --prefix ../instrumentation install && npm --prefix ../instrumentation run build && npm --prefix ../server install && npm --prefix ../server run build && node e2e-test.mjs",
+    "test": "npm run test:e2e"
+  }
+}
