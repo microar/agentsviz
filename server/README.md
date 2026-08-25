@@ -1,9 +1,10 @@
 # AgentsViz Event Server
 
-Minimal Node/Express + WebSocket server that ingests agent lifecycle events
-and broadcasts them to all connected clients. No persistence yet — events
-are validated and re-broadcast in memory only (a state store is tracked as
-a separate issue).
+Minimal Node/Express + WebSocket server that ingests agent lifecycle events,
+broadcasts them to all connected clients, and reconstructs current state
+(agents, tool calls, team map) in an in-memory store. No external DB or
+disk persistence — state lives only in the running process and is rebuilt
+from scratch on restart.
 
 ## Getting started
 
@@ -38,7 +39,8 @@ Ingests a single event and validates it against the schema defined in
 `error`).
 
 - **Valid event** → `202 Accepted`, body `{ "status": "accepted" }`. The
-  event is immediately broadcast to all connected WebSocket clients.
+  event updates the in-memory state store (see "State store" below) and is
+  immediately broadcast to all connected WebSocket clients.
 - **Invalid event** → `400 Bad Request`, body:
   ```json
   { "error": "Invalid event", "details": ["<one message per problem found>"] }
@@ -64,10 +66,26 @@ quick liveness check and to see how many WebSocket clients are connected.
 
 ### WebSocket: `ws://localhost:<port>/ws`
 
-Connect to receive every accepted event as a JSON text frame, broadcast to
-all currently connected clients in the order they were accepted. There is
-no history/replay — only events accepted while a client is connected are
-delivered to it.
+On connect, the server immediately sends a **snapshot message** reflecting
+current state, before any live events:
+
+```json
+{
+  "type": "snapshot",
+  "data": {
+    "agents": [ /* AgentState[] */ ],
+    "toolCalls": [ /* ToolCallState[] */ ],
+    "teams": { "research-team": ["researcher-7f3a", "writer-2b1c"] }
+  }
+}
+```
+
+After the snapshot, the client receives every subsequently accepted event
+as its own JSON text frame, broadcast to all currently connected clients in
+the order they were accepted. There is no event history/replay beyond the
+snapshot — a client that connects mid-stream gets caught up via the
+snapshot, then stays current via live events; it does not receive the raw
+events that produced that snapshot.
 
 Example (using `wscat`):
 
@@ -75,10 +93,34 @@ Example (using `wscat`):
 npx wscat -c ws://localhost:4000/ws
 ```
 
+## State store
+
+The server reconstructs current state from the accepted event stream in a
+plain in-memory store (`server/src/store.ts`) — no external DB, no disk
+persistence. State is lost on process restart.
+
+- **Agents** (`agents: AgentState[]`) — keyed internally by `agentId`.
+  `agent_start` adds the agent (or updates it) with `status: "running"`.
+  `agent_stop` sets `status: "stopped"` **in place** — the agent is never
+  removed from the store, so its history (team, timestamps, stop
+  reason/status) remains queryable after it stops.
+- **Tool calls** (`toolCalls: ToolCallState[]`) — each call starts as
+  `status: "pending"` on `tool_call_start`. Since the event schema has no
+  shared `callId` field yet (see "Open questions" in
+  `/docs/event-schema.md`), calls are correlated by `agentId` + `caller` +
+  `tool`; the matching `tool_call_end` updates that same entry's `status`
+  (`"success"`/`"error"`), `result`, and `message` **in place** rather than
+  appending a duplicate. A `tool_call_end` with no matching in-flight call
+  (e.g. it started before the store existed) is recorded directly as an
+  already-completed call instead of being dropped.
+- **Teams** (`teams: Record<string, string[]>`) — derived from the `team`
+  field on known agents, mapping each team name to the `agentId`s
+  currently associated with it.
+
 ## Notes
 
-- No database or persistence — this is an in-memory ingest-and-broadcast
-  scaffold only, per issue #2. A durable state store is a separate,
-  follow-up issue.
+- No database or persistence — events are validated, applied to the
+  in-memory state store, and broadcast; nothing is written to disk. State
+  resets on restart.
 - Request logging is a lightweight custom middleware (method, path,
   status, duration) writing to stdout — no external logging library.

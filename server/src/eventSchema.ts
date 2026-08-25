@@ -25,6 +25,64 @@ export interface ValidationResult {
   errors: string[];
 }
 
+/**
+ * Typed shape of a validated event, discriminated on `type`. Consumers
+ * (e.g. the state store) can call `validateEvent` first and then treat the
+ * body as `AgentEvent` for exhaustive, type-safe handling per event type.
+ */
+export type AgentEvent =
+  | {
+      type: "agent_start";
+      timestamp: string;
+      agentId: string;
+      team?: string;
+      caller?: string;
+    }
+  | {
+      type: "agent_stop";
+      timestamp: string;
+      agentId: string;
+      team?: string;
+      status: "success" | "error";
+      message?: string;
+    }
+  | {
+      type: "tool_call_start";
+      timestamp: string;
+      agentId: string;
+      team?: string;
+      caller: string;
+      tool: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      type: "tool_call_end";
+      timestamp: string;
+      agentId: string;
+      team?: string;
+      caller: string;
+      tool: string;
+      status: "success" | "error";
+      result?: unknown;
+      message?: string;
+    }
+  | {
+      type: "log";
+      timestamp: string;
+      agentId: string;
+      team?: string;
+      message: string;
+    }
+  | {
+      type: "error";
+      timestamp: string;
+      agentId: string;
+      team?: string;
+      caller?: string;
+      status: "error";
+      message: string;
+    };
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
