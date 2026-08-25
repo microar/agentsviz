@@ -23,9 +23,10 @@
  * ~20-line formula covers without adding a dependency.
  */
 
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useEventStore } from './store'
 import type { AgentState, ToolCallState } from './types'
+import { AgentDrawer } from './AgentDrawer'
 
 const GOLDEN_ANGLE_RAD = Math.PI * (3 - Math.sqrt(5)) // ~137.5deg, in radians
 
@@ -86,7 +87,12 @@ const AGENT_RADIUS = 20
 const TOOL_SIZE = 22
 
 export function GraphTab() {
-  const { agents, toolCalls } = useEventStore()
+  const { agents, toolCalls, logs } = useEventStore()
+  // Selection is local UI state, independent of the store/layout — opening
+  // or closing the drawer never touches agents/toolCalls/logs or the
+  // stable node slots above, so the live graph keeps updating underneath
+  // it either way (issue #12 acceptance criterion).
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
 
   const agentList = useMemo(() => Object.values(agents), [agents])
   const agentIds = useMemo(() => agentList.map((a) => a.agentId), [agentList])
@@ -211,7 +217,17 @@ export function GraphTab() {
               const pos = agentPositions.get(agent.agentId)
               if (!pos) return null
               return (
-                <g key={agent.agentId} transform={`translate(${pos.x}, ${pos.y})`} className="graph-agent-node">
+                <g
+                  key={agent.agentId}
+                  transform={`translate(${pos.x}, ${pos.y})`}
+                  className="graph-agent-node"
+                  onClick={() => setSelectedAgentId(agent.agentId)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') setSelectedAgentId(agent.agentId)
+                  }}
+                >
                   <circle r={AGENT_RADIUS} className={`graph-node ${agentStatusClass(agent)}`}>
                     <title>
                       {agent.agentId}
@@ -233,6 +249,13 @@ export function GraphTab() {
           </g>
         </svg>
       </div>
+
+      <AgentDrawer
+        agent={selectedAgentId ? (agents[selectedAgentId] ?? null) : null}
+        toolCalls={toolCalls}
+        logs={logs}
+        onClose={() => setSelectedAgentId(null)}
+      />
     </div>
   )
 }
