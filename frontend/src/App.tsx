@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import './App.css'
 import { EventStoreProvider, useEventStore, useTeams } from './store'
 
@@ -40,27 +40,87 @@ function GraphTab() {
   )
 }
 
+const ALL_AGENTS = '__all__'
+
+/** Distance (px) from the bottom within which we still consider the user "at the bottom". */
+const AUTO_SCROLL_THRESHOLD = 24
+
 function LogsTab() {
-  const { logs } = useEventStore()
+  const { agents, logs } = useEventStore()
+  const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS)
+  const [autoScroll, setAutoScroll] = useState(true)
+  const scrollRef = useRef<HTMLUListElement | null>(null)
+
+  // Known agents to populate the filter dropdown — union of agents seen via
+  // agent_start/stop and any agentId that has shown up on a log/error line
+  // (covers the case where a log arrives before/without a lifecycle event).
+  const agentIds = useMemo(() => {
+    const ids = new Set(Object.keys(agents))
+    for (const entry of logs) ids.add(entry.agentId)
+    return Array.from(ids).sort()
+  }, [agents, logs])
+
+  const filteredLogs = useMemo(
+    () => (agentFilter === ALL_AGENTS ? logs : logs.filter((entry) => entry.agentId === agentFilter)),
+    [logs, agentFilter],
+  )
+
+  // Auto-scroll to the bottom whenever new lines arrive, unless the user has
+  // scrolled up (paused) to read earlier lines.
+  useEffect(() => {
+    if (!autoScroll) return
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [filteredLogs, autoScroll])
+
+  function handleScroll() {
+    const el = scrollRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    setAutoScroll(distanceFromBottom <= AUTO_SCROLL_THRESHOLD)
+  }
+
+  function resumeAutoScroll() {
+    setAutoScroll(true)
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }
 
   return (
     <div>
-      <h2>Logs view — coming soon</h2>
-      <p>Streaming logs from agent runs will appear here.</p>
-      {logs.length === 0 ? (
-        <p className="empty-state">No log events yet — waiting for live data.</p>
-      ) : (
-        <ul className="log-list">
-          {logs
-            .slice()
-            .reverse()
-            .map((entry) => (
-              <li key={entry.id} className={`log-entry log-entry--${entry.kind}`}>
-                <span className="log-entry-time">{entry.timestamp}</span>
-                <span className="log-entry-agent">{entry.agentId}</span>
-                <span className="log-entry-message">{entry.message}</span>
-              </li>
+      <h2>Logs</h2>
+      <div className="logs-toolbar">
+        <label className="logs-filter">
+          Agent:{' '}
+          <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
+            <option value={ALL_AGENTS}>All agents</option>
+            {agentIds.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
             ))}
+          </select>
+        </label>
+        <button type="button" className="logs-scroll-toggle" onClick={autoScroll ? () => setAutoScroll(false) : resumeAutoScroll}>
+          {autoScroll ? 'Pause scroll' : 'Resume auto-scroll'}
+        </button>
+      </div>
+
+      {filteredLogs.length === 0 ? (
+        <p className="empty-state">
+          {logs.length === 0 ? 'No log events yet — waiting for live data.' : 'No log events for this agent yet.'}
+        </p>
+      ) : (
+        <ul className="log-list" ref={scrollRef} onScroll={handleScroll}>
+          {filteredLogs.map((entry) => (
+            <li key={entry.id} className={`log-entry log-entry--${entry.kind}`}>
+              <span className="log-entry-time">{entry.timestamp}</span>
+              <span className="log-entry-agent">{entry.agentId}</span>
+              {entry.kind === 'error' && <span className="log-entry-badge">ERROR</span>}
+              <span className="log-entry-message">{entry.message}</span>
+            </li>
+          ))}
         </ul>
       )}
     </div>
