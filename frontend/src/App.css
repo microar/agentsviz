@@ -148,3 +148,158 @@
 .log-entry--error .log-entry-message {
   color: #dc2626;
 }
+
+/* Graph tab */
+
+.graph-stats {
+  margin-bottom: 1rem;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.graph-swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+}
+
+.graph-swatch--running {
+  background: #646cff;
+  box-shadow: 0 0 0 2px rgba(100, 108, 255, 0.25);
+}
+
+.graph-swatch--stopped {
+  background: rgba(127, 127, 127, 0.5);
+}
+
+.graph-swatch--error {
+  background: #dc2626;
+}
+
+.graph-edge-swatch {
+  display: inline-block;
+  width: 1.1rem;
+  height: 0.15rem;
+  background: #d97706;
+}
+
+.graph-edge-swatch--settled {
+  background: rgba(127, 127, 127, 0.5);
+}
+
+.graph-canvas-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.03);
+}
+
+.graph-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 640px;
+}
+
+.graph-node {
+  fill: rgba(127, 127, 127, 0.35);
+  stroke: rgba(127, 127, 127, 0.6);
+  stroke-width: 2;
+  transition: fill 0.2s ease, stroke 0.2s ease;
+}
+
+.graph-node--running {
+  fill: rgba(100, 108, 255, 0.25);
+  stroke: #646cff;
+  animation: graph-pulse 1.6s ease-in-out infinite;
+}
+
+.graph-node--stopped {
+  fill: rgba(22, 163, 74, 0.15);
+  stroke: #16a34a;
+}
+
+.graph-node--error {
+  fill: rgba(220, 38, 38, 0.18);
+  stroke: #dc2626;
+}
+
+@keyframes graph-pulse {
+  0%, 100% {
+    stroke-width: 2;
+    stroke-opacity: 1;
+  }
+  50% {
+    stroke-width: 3.5;
+    stroke-opacity: 0.6;
+  }
+}
+
+.graph-node-label {
+  font-size: 10px;
+  fill: currentColor;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.graph-node-team {
+  font-size: 9px;
+  fill: var(--color-text-muted, #6b7280);
+}
+
+.graph-tool-rect {
+  fill: rgba(127, 127, 127, 0.12);
+  stroke: rgba(127, 127, 127, 0.55);
+  stroke-width: 1.5;
+}
+
+.graph-tool-label {
+  font-size: 9px;
+  fill: var(--color-text-muted, #6b7280);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.graph-edge {
+  stroke: rgba(127, 127, 127, 0.35);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.graph-edge--pending {
+  stroke: #d97706;
+  stroke-width: 2.5;
+  stroke-dasharray: 6 4;
+  animation: graph-edge-flow 0.8s linear infinite;
+}
+
+.graph-edge--settled {
+  stroke: rgba(127, 127, 127, 0.4);
+}
+
+.graph-edge--success {
+  stroke: rgba(22, 163, 74, 0.55);
+}
+
+.graph-edge--error {
+  stroke: rgba(220, 38, 38, 0.55);
+}
+
+@keyframes graph-edge-flow {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
