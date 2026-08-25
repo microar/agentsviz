@@ -1,0 +1,24 @@
+{
+  "name": "@agentsviz/instrumentation",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Fire-and-forget instrumentation helper agents call to emit schema-valid lifecycle events (see /docs/event-schema.md).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node smoke-test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "@types/node": "^24.13.3"
+  }
+}
