@@ -1,8 +1,9 @@
 import { createServer } from "node:http";
 import express, { type Request, type Response } from "express";
 import { WebSocketServer, WebSocket } from "ws";
-import { validateEvent } from "./eventSchema.js";
+import { validateEvent, type AgentEvent } from "./eventSchema.js";
 import { requestLogger } from "./logger.js";
+import { StateStore } from "./store.js";
 
 const PORT = Number(process.env.PORT) || 4000;
 
@@ -12,6 +13,7 @@ app.use(requestLogger);
 
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+const store = new StateStore();
 
 /** Broadcast an accepted event, as JSON, to every currently-connected WS client. */
 function broadcast(event: unknown): void {
@@ -35,7 +37,9 @@ app.post("/events", (req: Request, res: Response) => {
     return;
   }
 
-  broadcast(req.body);
+  const event = req.body as AgentEvent;
+  store.applyEvent(event);
+  broadcast(event);
   res.status(202).json({ status: "accepted" });
 });
 
@@ -50,6 +54,11 @@ app.use((err: unknown, _req: Request, res: Response, next: (err?: unknown) => vo
 
 wss.on("connection", (socket) => {
   console.log(`WebSocket client connected (${wss.clients.size} total)`);
+
+  // Send a full state snapshot first, so new clients don't have to wait for
+  // future events to know current agent/tool-call/team state.
+  socket.send(JSON.stringify({ type: "snapshot", data: store.getSnapshot() }));
+
   socket.on("close", () => {
     console.log(`WebSocket client disconnected (${wss.clients.size} total)`);
   });
