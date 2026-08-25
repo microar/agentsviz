@@ -1,0 +1,12 @@
+{
+  "name": "agentsviz",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Root dev tooling for AgentsViz — see README.md for the full project overview.",
+  "scripts": {
+    "dev": "concurrently -n server,frontend -c blue,magenta \"npm:dev --prefix server\" \"npm:dev --prefix frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
