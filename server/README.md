@@ -18,9 +18,10 @@ to port `4000`).
 
 ## Configuration
 
-| Env var | Default | Description |
-|---------|---------|--------------|
-| `PORT`  | `4000`  | Port the HTTP + WebSocket server listens on. |
+| Env var         | Default                                   | Description |
+|-----------------|--------------------------------------------|--------------|
+| `PORT`          | `4000`                                     | Port the HTTP + WebSocket server listens on. |
+| `EVENT_LOG_PATH`| `server/data/events-<start-timestamp>.jsonl` | Path to the JSONL event log file (see "Event log" below). |
 
 ## Scripts
 
@@ -117,10 +118,39 @@ persistence. State is lost on process restart.
   field on known agents, mapping each team name to the `agentId`s
   currently associated with it.
 
+## Event log (JSONL)
+
+As a cheap foundation for future replay/debugging (see issue #13), every
+**accepted** event is also appended to a local `.jsonl` file — one JSON
+object per line, in acceptance order.
+
+- **Location**: `server/data/events-<start-timestamp>.jsonl` by default
+  (the directory is created automatically). Override with the
+  `EVENT_LOG_PATH` env var to point at a specific file instead, e.g.:
+  ```bash
+  EVENT_LOG_PATH=/tmp/agentsviz-events.jsonl npm run dev
+  ```
+- **No performance impact on live broadcasting**: the write is
+  fire-and-forget (not awaited before the WS broadcast or the HTTP
+  response — see `logEvent` in `server/src/eventLogger.ts`), using a
+  single sequential `fs.WriteStream` per run so writes can't interleave.
+  Write failures are logged with `console.warn` and otherwise ignored —
+  they never affect broadcasting or the HTTP response.
+- **Rotating / clearing between sessions**: with the default path, every
+  server start writes to a fresh, timestamped file — nothing is ever
+  appended across restarts, so there's no "stale" log to clear. To
+  reclaim disk space, just delete everything under `server/data/`; the
+  directory is gitignored (along with any `*.jsonl` file, in case
+  `EVENT_LOG_PATH` points elsewhere in the repo), so no event data is
+  ever committed. This is intentionally simple — no size-based rotation
+  or log retention policy.
+
 ## Notes
 
-- No database or persistence — events are validated, applied to the
-  in-memory state store, and broadcast; nothing is written to disk. State
-  resets on restart.
+- No database — events are validated and applied to the in-memory state
+  store, which still resets on restart. Accepted events are additionally
+  appended to a local JSONL file for future replay (see "Event log"
+  above); this is a cheap append-only log, not a queryable persistence
+  layer.
 - Request logging is a lightweight custom middleware (method, path,
   status, duration) writing to stdout — no external logging library.

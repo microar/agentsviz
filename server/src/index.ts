@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import express, { type Request, type Response } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { validateEvent, type AgentEvent } from "./eventSchema.js";
+import { logEvent } from "./eventLogger.js";
 import { requestLogger } from "./logger.js";
 import { StateStore } from "./store.js";
 
@@ -40,6 +41,9 @@ app.post("/events", (req: Request, res: Response) => {
   const event = req.body as AgentEvent;
   store.applyEvent(event);
   broadcast(event);
+  // Fire-and-forget JSONL append (see eventLogger.ts) — not awaited, so it
+  // cannot delay the broadcast above or this response.
+  logEvent(event);
   res.status(202).json({ status: "accepted" });
 });
 
