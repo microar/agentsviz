@@ -34,20 +34,20 @@ export interface LifecycleEvent {
 }
 
 /**
- * Snapshot message the server may send a client right after it connects,
- * to populate initial state before live events start arriving. The event
- * server doesn't broadcast this yet (state-store issue is separate/#3),
- * so the store also works fine if a snapshot never shows up — it just
- * starts from an empty state and builds up from live events only.
+ * Snapshot message the server sends a client right after it connects, to
+ * populate initial state before live events start arriving. Unlike live
+ * events, the payload is not raw `LifecycleEvent`s — the server has
+ * already derived current state from its event history (see
+ * `server/src/store.ts` / `server/README.md`), so `data.agents` and
+ * `data.toolCalls` are already-merged `AgentState`/`SnapshotToolCall`
+ * objects (one entry per agent/call, not one per event).
  */
 export interface SnapshotMessage {
   type: 'snapshot'
   data: {
-    agents?: LifecycleEvent[]
-    toolCalls?: LifecycleEvent[]
-    logs?: LifecycleEvent[]
-    /** Some server implementations may send this instead of raw events. */
-    teams?: Record<string, string[]>
+    agents: AgentState[]
+    toolCalls: SnapshotToolCall[]
+    teams: Record<string, string[]>
   }
 }
 
@@ -57,7 +57,9 @@ export function isSnapshotMessage(msg: unknown): msg is SnapshotMessage {
   return (
     typeof msg === 'object' &&
     msg !== null &&
-    (msg as { type?: unknown }).type === 'snapshot'
+    (msg as { type?: unknown }).type === 'snapshot' &&
+    typeof (msg as { data?: unknown }).data === 'object' &&
+    (msg as { data?: unknown }).data !== null
   )
 }
 
@@ -84,6 +86,26 @@ export interface AgentState {
 /** Derived, store-friendly view of a tool call (start merged with its end, if any). */
 export interface ToolCallState {
   id: string
+  agentId: string
+  team?: string
+  caller?: string
+  tool: string
+  input?: Record<string, unknown>
+  status: 'pending' | 'success' | 'error'
+  result?: unknown
+  message?: string
+  startedAt: string
+  endedAt?: string
+}
+
+/**
+ * Shape of a tool call entry as sent by the server in a snapshot message
+ * (`server/src/store.ts`'s `ToolCallState`) — identical to the client's own
+ * `ToolCallState` except it identifies the call with `callId` rather than
+ * `id`. Mapped into `ToolCallState` when a snapshot is ingested.
+ */
+export interface SnapshotToolCall {
+  callId: string
   agentId: string
   team?: string
   caller?: string
