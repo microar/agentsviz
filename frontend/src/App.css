@@ -70,7 +70,81 @@
 }
 
 .tab-panel p {
-  margin: 0;
+  margin: 0 0 1rem;
   color: var(--color-text-muted, #6b7280);
   line-height: 1.5;
+}
+
+.connection-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  background: rgba(127, 127, 127, 0.15);
+}
+
+.connection-badge--open {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.connection-badge--connecting {
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.12);
+}
+
+.connection-badge--closed {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.empty-state {
+  color: var(--color-text-muted, #6b7280);
+  font-style: italic;
+}
+
+.stat-list,
+.team-list,
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stat-list li,
+.team-list li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.15);
+}
+
+.log-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.log-entry {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.15);
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.log-entry-time {
+  color: var(--color-text-muted, #6b7280);
+  white-space: nowrap;
+}
+
+.log-entry-agent {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.log-entry--error .log-entry-message {
+  color: #dc2626;
 }
