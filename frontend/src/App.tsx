@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import './App.css'
-import { EventStoreProvider, useEventStore, useTeams } from './store'
+import { EventStoreProvider, useEventStore } from './store'
 import { GraphTab } from './Graph'
+import { TeamsTab } from './Teams'
 
 type TabId = 'graph' | 'logs' | 'teams'
 
@@ -99,29 +100,6 @@ function LogsTab() {
               <span className="log-entry-agent">{entry.agentId}</span>
               {entry.kind === 'error' && <span className="log-entry-badge">ERROR</span>}
               <span className="log-entry-message">{entry.message}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
-
-function TeamsTab() {
-  const teams = useTeams()
-  const teamNames = Object.keys(teams)
-
-  return (
-    <div>
-      <h2>Teams view — coming soon</h2>
-      <p>Team membership and ownership details will appear here.</p>
-      {teamNames.length === 0 ? (
-        <p className="empty-state">No team data yet — waiting for live data.</p>
-      ) : (
-        <ul className="team-list">
-          {teamNames.map((team) => (
-            <li key={team}>
-              <strong>{team}</strong>: {teams[team].length} agent{teams[team].length === 1 ? '' : 's'}
             </li>
           ))}
         </ul>
