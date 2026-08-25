@@ -4,8 +4,9 @@
  * Wraps the WebSocket connection (see ws.ts) and exposes a single React
  * Context so the Graph/Logs/Teams tabs can all read the same live state
  * without prop drilling. State is built from:
- *  - an optional `{ type: "snapshot", data: {...} }` message the server
- *    may send right after connecting, to seed initial state, and
+ *  - the `{ type: "snapshot", data: {...} }` message the server sends
+ *    right after connecting, to seed initial state from its current
+ *    agents/tool-calls, and
  *  - individual lifecycle events (agent_start/stop, tool_call_start/end,
  *    log, error) applied incrementally as they arrive.
  *
@@ -17,6 +18,14 @@
  *  - `tool_call_end` updates the matching pending call (same agentId +
  *    tool + caller) in place rather than appending a duplicate.
  *  - `log` / `error` are appended to a capped rolling log list.
+ *
+ * The snapshot message is handled separately from live events: the server
+ * (`server/src/store.ts`) sends already-derived `AgentState[]` /
+ * `ToolCallState[]` (one merged entry per agent/call, not raw events), so
+ * the snapshot is applied by setting that derived state directly rather
+ * than replaying it through the per-event reducer. There is no snapshot
+ * equivalent for `logs` — the server doesn't track a log history, so the
+ * Logs tab only starts filling in once live `log`/`error` events arrive.
  */
 
 import {
@@ -34,6 +43,7 @@ import {
   type AgentState,
   type LifecycleEvent,
   type LogEntry,
+  type SnapshotToolCall,
   type ToolCallState,
 } from './types'
 
@@ -56,11 +66,28 @@ const initialState: EventStoreState = {
 
 type Action =
   | { kind: 'status'; status: ConnectionStatus }
-  | { kind: 'snapshot'; agents?: LifecycleEvent[]; toolCalls?: LifecycleEvent[]; logs?: LifecycleEvent[] }
+  | { kind: 'snapshot'; agents: AgentState[]; toolCalls: ToolCallState[] }
   | { kind: 'event'; event: LifecycleEvent }
 
 let logIdCounter = 0
 let toolCallIdCounter = 0
+
+/** Maps a server snapshot tool call (`callId`) to the client's `ToolCallState` (`id`). */
+function toolCallStateFromSnapshot(call: SnapshotToolCall): ToolCallState {
+  return {
+    id: call.callId,
+    agentId: call.agentId,
+    team: call.team,
+    caller: call.caller,
+    tool: call.tool,
+    input: call.input,
+    status: call.status,
+    result: call.result,
+    message: call.message,
+    startedAt: call.startedAt,
+    endedAt: call.endedAt,
+  }
+}
 
 function agentFromStartEvent(event: LifecycleEvent): AgentState {
   return {
@@ -187,11 +214,15 @@ function reducer(state: EventStoreState, action: Action): EventStoreState {
     case 'status':
       return { ...state, connectionStatus: action.status }
     case 'snapshot': {
-      let next = state
-      for (const event of action.agents ?? []) next = applyEvent(next, event)
-      for (const event of action.toolCalls ?? []) next = applyEvent(next, event)
-      for (const event of action.logs ?? []) next = applyEvent(next, event)
-      return next
+      // The server sends already-derived state (not raw lifecycle events),
+      // so set it directly rather than replaying it through applyEvent.
+      const agents: Record<string, AgentState> = {}
+      for (const agent of action.agents) agents[agent.agentId] = agent
+      const toolCalls =
+        action.toolCalls.length > MAX_TOOL_CALLS
+          ? action.toolCalls.slice(action.toolCalls.length - MAX_TOOL_CALLS)
+          : action.toolCalls
+      return { ...state, agents, toolCalls }
     }
     case 'event':
       return applyEvent(state, action.event)
@@ -222,8 +253,7 @@ export function EventStoreProvider({ children, wsUrl }: EventStoreProviderProps)
           dispatch({
             kind: 'snapshot',
             agents: data.data.agents,
-            toolCalls: data.data.toolCalls,
-            logs: data.data.logs,
+            toolCalls: data.data.toolCalls.map(toolCallStateFromSnapshot),
           })
           return
         }
