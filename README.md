@@ -1,13 +1,14 @@
 # AgentsViz
 
 A live dashboard for watching multi-agent runs as they happen: agents
-instrument themselves with a tiny helper library, an event server ingests
-and broadcasts what they report, and a React frontend renders it as a
-live graph, log stream, and team view.
+report themselves — either via a tiny helper library or, for Claude Code
+agents, zero-code-change hooks — an event server ingests and broadcasts
+what they report, and a React frontend renders it as a live graph, log
+stream, and team view.
 
 ```
-instrumentation/  --POST /events-->  server/  --WebSocket broadcast-->  frontend/
- (agent helper)                  (ingest + state store)              (Graph / Logs / Teams)
+instrumentation/ or hooks-emitter/  --POST /events-->  server/  --WebSocket broadcast-->  frontend/
+      (agent reporting)                            (ingest + state store)              (Graph / Logs / Teams)
 ```
 
 ## Architecture
@@ -18,7 +19,14 @@ instrumentation/  --POST /events-->  server/  --WebSocket broadcast-->  frontend
   `error`) to emit schema-valid lifecycle events. Every call is
   fire-and-forget: if the event server isn't running, dispatch failures
   are caught internally and never thrown into agent code, so instrumented
-  agents run identically whether or not anyone is watching.
+  agents run identically whether or not anyone is watching. Transport- and
+  framework-agnostic: works with any agent runtime that can run this
+  Node module.
+- **[`hooks-emitter/`](hooks-emitter/README.md)** — a Claude Code
+  [hook](https://code.claude.com/docs/en/hooks) script that reports a
+  Claude Code session to AgentsViz with zero code changes in the agent —
+  configuration only. It's an alternative to `instrumentation/` for
+  Claude Code users specifically; see "Hooks-based reporting" below.
 - **[`server/`](server/README.md)** — an Express + `ws` server that
   accepts events at `POST /events`, validates them, applies them to an
   in-memory state store (agents, tool calls, team map), and broadcasts
@@ -104,6 +112,75 @@ Build the helper first with `npm install && npm run build` inside
 `instrumentation/`. If the event server isn't running, these calls are
 safe no-ops — see "Server not running" below.
 
+## Hooks-based reporting (Claude Code only)
+
+If the agent you want to watch is a **Claude Code** session (including
+its Task-tool sub-agents), you don't need to touch its code at all.
+[`hooks-emitter/`](hooks-emitter/README.md) is a small script that
+Claude Code itself invokes at each lifecycle point (`SessionStart`,
+`PreToolUse`, `PostToolUse`, `Stop`, `SubagentStop`), which maps the
+hook's payload to the same event envelope as `instrumentation/` and
+POSTs it to the event server. This is configuration-only: register the
+script in `.claude/settings.json` and Claude Code does the rest.
+
+**Which one to pick:**
+
+- **Instrumenting a Claude Code agent, don't want to change its code?**
+  Use `hooks-emitter/`.
+- **Instrumenting anything else** (a different agent framework, a
+  non-Claude-Code process, or you want fine-grained control over exactly
+  what gets reported and when)? Use `instrumentation/` — it's
+  transport/framework-agnostic, while `hooks-emitter/` only works because
+  the Claude Code harness itself calls the hook script; there's no
+  equivalent hook mechanism for other agent runtimes.
+
+Build it, then register it with Claude Code:
+
+```bash
+cd hooks-emitter
+npm install
+npm run build   # compiles src/ -> dist/
+```
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node /absolute/path/to/hooks-emitter/dist/index.js" }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node /absolute/path/to/hooks-emitter/dist/index.js" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node /absolute/path/to/hooks-emitter/dist/index.js" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node /absolute/path/to/hooks-emitter/dist/index.js" }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "node /absolute/path/to/hooks-emitter/dist/index.js" }] }
+    ]
+  }
+}
+```
+
+The same script handles all five hooks — see
+[`hooks-emitter/README.md`](hooks-emitter/README.md) for the full
+snippet, the hook -> event mapping table, and how it derives `agentId`,
+`team`, and `caller` for Task-tool sub-agent hierarchies.
+
+Env vars it respects (set in the environment Claude Code runs hooks in):
+
+- `AGENTSVIZ_EVENTS_URL` — where to POST events. Defaults to
+  `http://localhost:4000/events`.
+- `AGENTSVIZ_TEAM` — overrides the derived `team` field. If unset, `team`
+  falls back to the basename of the session's working directory.
+
+**Known limitation:** `hooks-emitter/` is Claude Code-specific — it only
+works because Claude Code's hook mechanism invokes the script for you.
+It cannot report on other agent frameworks or non-Claude-Code processes;
+for those, use `instrumentation/` instead.
+
 ## Env vars / ports
 
 | Package          | Variable                    | Default                                      | Description |
@@ -113,6 +190,8 @@ safe no-ops — see "Server not running" below.
 | `frontend`        | `VITE_WS_URL`                | derived from `window.location` + port `4000`  | WebSocket URL the frontend connects to. Set this if the server isn't on the same host or the default port. |
 | `frontend` (dev)  | *(Vite dev server port)*     | `5173`                                        | Local dev server port, printed on `npm run dev`. |
 | `instrumentation` | `INSTRUMENTATION_SERVER_URL` | `http://localhost:4000/events`                | Where instrumented agents POST events. Can also be set via `configure({ serverUrl })`. |
+| `hooks-emitter`   | `AGENTSVIZ_EVENTS_URL`       | `http://localhost:4000/events`                | Where the hook script POSTs events. |
+| `hooks-emitter`   | `AGENTSVIZ_TEAM`             | *(basename of the session's `cwd`)*           | Overrides the derived `team` field. |
 
 ## Troubleshooting
 
@@ -133,6 +212,12 @@ safe no-ops — see "Server not running" below.
   identical to "server not running" from the agent's side. Check the
   server's `GET /health` endpoint and its stdout request log to confirm
   events are arriving.
+- **Claude Code session (via `hooks-emitter/`) doesn't show up anywhere.**
+  Same idea as above, but check `AGENTSVIZ_EVENTS_URL` and confirm the
+  `command` paths in `.claude/settings.json` point at the built
+  `hooks-emitter/dist/index.js`. The hook script never errors or blocks
+  the session (by design — see `hooks-emitter/README.md`), so a
+  misconfigured path or URL fails silently from the agent's side too.
 - **`npm run dev` at the root doesn't do anything.** Make sure you ran
   `npm install` at the repo root first (installs `concurrently`), and
   that `server/` and `frontend/` each have their own `node_modules`

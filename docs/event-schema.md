@@ -20,6 +20,23 @@ agreed upon before server or frontend code is written.
   file line, message queue message, etc.) — any transport that can carry
   a JSON object can carry these events.
 
+## Emitters
+
+Two packages in this repo produce events in this exact shape:
+
+- **[`instrumentation/`](../instrumentation/README.md)** — a helper
+  library any agent process imports and calls explicitly. Transport- and
+  framework-agnostic.
+- **[`hooks-emitter/`](../hooks-emitter/README.md)** — a Claude Code
+  [hook](https://code.claude.com/docs/en/hooks) script that maps hook
+  payloads to this schema automatically, with no code changes in the
+  agent. Claude Code-specific.
+
+Both POST to the same `/events` endpoint and are validated by the same
+`server/src/eventSchema.ts`. This document is the single source of truth
+for the wire format either one produces — see each package's README for
+its own setup and payload-mapping details.
+
 ## Field reference
 
 These are the complete set of fields used across all event types. Each
