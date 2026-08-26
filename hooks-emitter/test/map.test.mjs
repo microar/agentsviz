@@ -55,7 +55,7 @@ assert.deepEqual(
     type: "tool_call_start",
     timestamp: "2026-08-25T00:00:00.000Z",
     agentId: "sess-1",
-    caller: "sess-1", // schema requires `caller`; sub-agent hierarchy derivation is out of scope (#30)
+    caller: "sess-1", // no agent_id on this payload -> top-level agent, caller is a self-reference
     tool: "Bash",
     input: { command: "ls" },
   });
@@ -169,9 +169,126 @@ assert.equal(
   );
   assert.equal(event.type, "agent_stop");
   assert.equal(event.status, "success");
-  // agentId derivation from sub-agent hierarchy (agent_id vs session_id)
-  // is out of scope for this issue (#30) — we always use session_id.
+  // Sub-agent agentId is synthesized as `${session_id}-${agent_id}` so it
+  // is distinct from the parent's own agentId (see #30 / map.ts header).
+  assert.equal(event.agentId, "sess-1-sub-1");
+}
+
+// --- team/caller derivation for sub-agent hierarchies (#30) --------------
+
+// PreToolUse firing inside a sub-agent (agent_id present, per
+// https://code.claude.com/docs/en/hooks) gets a compound agentId and a
+// caller pointing back at the parent session_id, linking child to parent.
+{
+  const event = mapHookPayload(
+    {
+      session_id: "sess-1",
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "ls" },
+      agent_id: "sub-1",
+      agent_type: "Explore",
+    },
+    fixedNow,
+  );
+  assert.equal(event.agentId, "sess-1-sub-1", "sub-agent gets a distinct agentId");
+  assert.equal(event.caller, "sess-1", "caller links the sub-agent event back to the parent");
+}
+
+// PostToolUse firing inside a sub-agent: same agentId/caller derivation.
+{
+  const event = mapHookPayload(
+    {
+      session_id: "sess-1",
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_response: { type: "text", content: "ok" },
+      agent_id: "sub-1",
+    },
+    fixedNow,
+  );
+  assert.equal(event.agentId, "sess-1-sub-1");
+  assert.equal(event.caller, "sess-1");
+}
+
+// PreToolUse for the Task tool call itself fires in the PARENT's own
+// context (no agent_id yet — the sub-agent doesn't exist until Claude
+// Code spawns it), so it maps like any other top-level tool call: the
+// parent spawning a child is recorded by the child's own later events
+// (above) carrying `caller: parentSessionId`, not by this event.
+{
+  const event = mapHookPayload(
+    {
+      session_id: "sess-1",
+      hook_event_name: "PreToolUse",
+      tool_name: "Task",
+      tool_input: { description: "Explore the codebase", subagent_type: "Explore" },
+    },
+    fixedNow,
+  );
   assert.equal(event.agentId, "sess-1");
+  assert.equal(event.caller, "sess-1");
+  assert.equal(event.tool, "Task");
+}
+
+// team: no cwd, no env var -> omitted.
+{
+  const original = process.env.AGENTSVIZ_TEAM;
+  delete process.env.AGENTSVIZ_TEAM;
+  const event = mapHookPayload({ session_id: "sess-1", hook_event_name: "SessionStart" }, fixedNow);
+  assert.equal(event.team, undefined);
+  if (original !== undefined) process.env.AGENTSVIZ_TEAM = original;
+}
+
+// team: derived from basename(cwd) when no env override is set.
+{
+  const original = process.env.AGENTSVIZ_TEAM;
+  delete process.env.AGENTSVIZ_TEAM;
+  const event = mapHookPayload(
+    { session_id: "sess-1", hook_event_name: "SessionStart", cwd: "/Users/dev/projects/agentsviz" },
+    fixedNow,
+  );
+  assert.equal(event.team, "agentsviz");
+  if (original !== undefined) process.env.AGENTSVIZ_TEAM = original;
+}
+
+// team: $AGENTSVIZ_TEAM env var takes precedence over cwd basename.
+{
+  const original = process.env.AGENTSVIZ_TEAM;
+  process.env.AGENTSVIZ_TEAM = "platform-team";
+  const event = mapHookPayload(
+    { session_id: "sess-1", hook_event_name: "SessionStart", cwd: "/Users/dev/projects/agentsviz" },
+    fixedNow,
+  );
+  assert.equal(event.team, "platform-team");
+  if (original === undefined) delete process.env.AGENTSVIZ_TEAM;
+  else process.env.AGENTSVIZ_TEAM = original;
+}
+
+// team is populated consistently for a parent and its sub-agent sharing
+// the same cwd (both derive the same team, satisfying #30's acceptance
+// criterion that team is consistent across an entire project's agents).
+{
+  const original = process.env.AGENTSVIZ_TEAM;
+  delete process.env.AGENTSVIZ_TEAM;
+  const parentEvent = mapHookPayload(
+    { session_id: "sess-1", hook_event_name: "SessionStart", cwd: "/repo/agentsviz" },
+    fixedNow,
+  );
+  const childEvent = mapHookPayload(
+    {
+      session_id: "sess-1",
+      hook_event_name: "PreToolUse",
+      tool_name: "Read",
+      cwd: "/repo/agentsviz",
+      agent_id: "sub-2",
+    },
+    fixedNow,
+  );
+  assert.equal(parentEvent.team, "agentsviz");
+  assert.equal(childEvent.team, "agentsviz");
+  assert.equal(parentEvent.team, childEvent.team);
+  if (original !== undefined) process.env.AGENTSVIZ_TEAM = original;
 }
 
 // --- Unmapped hook events -------------------------------------------------

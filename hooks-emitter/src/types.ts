@@ -13,12 +13,23 @@
 // treated as optional/unknown so a harness version skew doesn't crash the
 // script — see mapHookPayload's defensive handling.
 
-/** Fields common to every Claude Code hook payload. */
+/**
+ * Fields common to every Claude Code hook payload.
+ *
+ * `agent_id` / `agent_type` are documented as present "when running with
+ * `--agent` or inside a subagent" — i.e. a Task-tool-spawned sub-agent's
+ * own hook firings (its PreToolUse/PostToolUse/SubagentStop) carry these
+ * even though `session_id` stays identical to the parent session (Claude
+ * Code does not mint a distinct `session_id` per sub-agent). See
+ * map.ts's `deriveAgentId`/`deriveTeam` for how this package uses them.
+ */
 export interface BaseHookPayload {
   session_id: string;
   hook_event_name: string;
   cwd?: string;
   transcript_path?: string;
+  agent_id?: string;
+  agent_type?: string;
   [key: string]: unknown;
 }
 

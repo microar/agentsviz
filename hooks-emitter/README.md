@@ -22,12 +22,60 @@ exactly (also enforced by `server/src/eventSchema.ts`).
 | `Stop`               | `agent_stop`          |
 | `SubagentStop`      | `agent_stop`          |
 
-`agentId` is always the hook payload's `session_id` — stable for the
-lifetime of one Claude Code session. `caller` on tool call events is also
-set to the session's own `agentId`; deriving a real `team`/`caller` for
-sub-agent hierarchies (parent/child session ids) is intentionally out of
-scope here — see the follow-up issue for that. Any other hook event
+`agentId` is normally the hook payload's `session_id` — stable for the
+lifetime of one Claude Code session. Any other hook event
 (`Notification`, `PreCompact`, `PermissionDenied`, etc.) is ignored.
+
+## Sub-agent hierarchies (Task tool) — `team` and `caller`
+
+Claude Code hook payloads don't have a native "team" or "caller" concept,
+and — per [the hooks docs](https://code.claude.com/docs/en/hooks) — a
+Task-tool-spawned sub-agent does **not** get its own distinct
+`session_id`; it shares the parent session's. What the payload *does*
+carry, on every hook that fires **inside** the sub-agent's own execution
+(its `PreToolUse`, `PostToolUse`, `SubagentStop` — not the parent's
+`PreToolUse` for the `Task` call itself, which fires before the sub-agent
+exists), is `agent_id` (unique per sub-agent) and `agent_type`. This
+package uses that to derive `agentId`/`caller`:
+
+- **`agentId`**: when a hook payload carries `agent_id` (i.e. it fired
+  inside a sub-agent), the emitted `agentId` is synthesized as
+  `${session_id}-${agent_id}` — distinct from the parent's own `agentId`
+  (plain `session_id`). Without `agent_id`, `agentId` is just
+  `session_id`, as before.
+- **`caller`**: always the owning session's `session_id`. For a
+  top-level agent this is a self-reference (unchanged from #29's
+  behavior); for a sub-agent event it's the *parent's* agentId, which is
+  exactly the edge the Graph tab needs to draw parent and child as linked
+  nodes instead of one flat, disconnected agent per session.
+
+**Honesty note / fallback:** this correlation depends on the harness
+actually populating `agent_id` on hooks that fire inside a sub-agent, per
+the documented behavior above. If some Claude Code version or hook path
+ever omits it, this package has no independent way to recover sub-agent
+identity (hook invocations are separate, stateless processes — there's no
+in-memory place to correlate a `Task` call to the sub-agent it later
+spawns), so it falls back to treating that event as top-level: `agentId`
+equals `session_id`, indistinguishable from the parent. That's a
+degraded-but-safe fallback (nothing crashes, the event is still emitted),
+not a guarantee every sub-agent is always distinguishable.
+
+### `team`
+
+`team` is derived, in precedence order:
+
+1. The `$AGENTSVIZ_TEAM` environment variable, if set in the environment
+   Claude Code runs hooks in — e.g. via an `env` block in your project's
+   `.claude/settings.json` (if your Claude Code version supports one) or
+   your shell profile. Set this to override the default per project.
+2. Otherwise, the basename of the hook payload's `cwd` (e.g.
+   `/Users/dev/projects/agentsviz` -> `agentsviz`).
+3. Omitted if neither is available.
+
+Because a sub-agent runs in the same project directory as its parent,
+both derive the same `cwd` basename (or the same env override), so every
+agent/sub-agent originating from one project consistently reports the
+same `team` — grouping them together in the Teams tab.
 
 ## Install / build
 
@@ -120,9 +168,9 @@ These match the acceptance criteria in issue #29:
 ## How it works internally
 
 - `src/map.ts` — pure functions (`parseHookPayload`, `mapHookPayload`,
-  `classifyToolResponse`) that turn a hook JSON payload into an event, or
-  `null` if there's nothing to emit. No I/O; this is what `npm test`
-  exercises directly.
+  `classifyToolResponse`, `deriveAgentId`, `deriveCaller`, `deriveTeam`)
+  that turn a hook JSON payload into an event, or `null` if there's
+  nothing to emit. No I/O; this is what `npm test` exercises directly.
 - `src/index.ts` — the hook entry point: reads the payload from stdin,
   maps it, and hands the resulting event off to the detached sender
   before exiting `0`.
@@ -143,9 +191,6 @@ the schema whenever `status` is `"error"`).
 
 ## Out of scope for this package
 
-Per issue #29's scope (see the linked follow-up issues for these):
-
-- Deriving `team`/`caller` for sub-agent hierarchies (#30).
 - Broader README/docs updates beyond this file (#31).
 - A full integration test suite against a live server (#32) — this
   package only unit-tests its payload-mapping logic (`npm test`).
