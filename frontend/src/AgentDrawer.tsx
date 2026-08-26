@@ -87,6 +87,7 @@ export function AgentDrawer({ agent, toolCalls, logs, onClose }: AgentDrawerProp
             <dd>
               {agent.status}
               {agent.stopStatus ? ` / ${agent.stopStatus}` : ''}
+              {agent.inferred && <span className="agent-drawer-inferred-badge">presumed</span>}
             </dd>
           </div>
           {agent.caller && (

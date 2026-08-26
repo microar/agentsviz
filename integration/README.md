@@ -1,14 +1,15 @@
-# Integration tests (issues #10, #32)
+# Integration tests (issues #10, #32, #37)
 
 End-to-end integration tests that exercise the real pieces built for
-issues #3, #4, #6, and #29 together: the **instrumentation helper**
+issues #3, #4, #6, #29, and #37 together: the **instrumentation helper**
 (`instrumentation/`), the **hooks-emitter** script (`hooks-emitter/`),
 the **event server**'s HTTP ingest + WebSocket broadcast + in-memory
 state store (`server/`), and the schema they all speak
 (`/docs/event-schema.md`).
 
 There are two independent producers of the same event schema, and two
-matching test files:
+matching test files, plus a third test for the server's own stale-agent
+liveness sweep:
 
 - `e2e-test.mjs` (issue #10) — the `instrumentation/` library, called
   directly the way a real agent's own code would call it.
@@ -18,9 +19,20 @@ matching test files:
   fire-and-forget (no HTTP response visibility, no waiting). See that
   file's header comment and the section below for what's different about
   testing this path.
+- `stale-agent-e2e-test.mjs` (issue #37) — proves the server's
+  liveness-timeout reaping (`StateStore.reapStaleAgents`, swept on an
+  interval from `server/src/index.ts`) works end-to-end: starts a real
+  server with a short `AGENT_STALE_TIMEOUT_MS`, starts one agent that
+  never sends `agent_stop` (simulating a killed process/closed terminal)
+  and another that keeps emitting plain `log` events, and asserts the
+  abandoned agent is broadcast live over WebSocket as `stopped` with
+  `inferred: true` once the timeout elapses, while the actively-emitting
+  one is never falsely reaped. `server/test/store.test.ts` covers the
+  same logic as a fast, deterministic unit test against the store
+  directly.
 
-Both start a real, unmodified event server and assert against its real
-WebSocket broadcast stream and state snapshot — no mocks, no stubs.
+All three start a real, unmodified event server and assert against its
+real WebSocket broadcast stream and state snapshot — no mocks, no stubs.
 
 ## What it does
 
@@ -129,9 +141,10 @@ exactly the way Claude Code's own harness drives a hook:
 
 ```bash
 cd integration
-npm test               # both suites: instrumentation (#10) + hooks-emitter (#32)
+npm test                  # all three: instrumentation (#10) + hooks-emitter (#32) + stale-agent (#37)
 npm run test:e2e           # instrumentation library only
 npm run test:hooks-emitter # hooks-emitter script only
+npm run test:stale-agent   # server-side stale-agent liveness sweep only
 ```
 
 Each script installs/builds its own producer package (`instrumentation`

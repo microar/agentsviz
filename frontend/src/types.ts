@@ -81,6 +81,13 @@ export interface AgentState {
   stoppedAt?: string
   stopStatus?: EventStatus
   stopMessage?: string
+  /**
+   * True when the server's liveness sweep presumed this agent stopped
+   * because it went quiet (no event of any kind) for its configured
+   * timeout, rather than the agent sending an explicit `agent_stop`. See
+   * server/src/store.ts's `reapStaleAgents`. Absent on a clean stop.
+   */
+  inferred?: true
 }
 
 /** Derived, store-friendly view of a tool call (start merged with its end, if any). */

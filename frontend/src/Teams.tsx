@@ -24,8 +24,11 @@ import type { AgentState } from './types'
 
 const UNGROUPED = 'Ungrouped'
 
-function agentStatusLabel(agent: AgentState): 'running' | 'stopped' | 'error' {
+function agentStatusLabel(agent: AgentState): 'running' | 'stopped' | 'error' | 'stale' {
   if (agent.status === 'running') return 'running'
+  // A presumed (not explicitly reported) stop gets its own label — see
+  // Graph.tsx's agentStatusClass for the same priority reasoning.
+  if (agent.inferred) return 'stale'
   if (agent.stopStatus === 'error') return 'error'
   return 'stopped'
 }
@@ -85,6 +88,7 @@ export function TeamsTab() {
         <span className="graph-legend-item"><span className="graph-swatch graph-swatch--running" /> running</span>
         <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stopped" /> stopped</span>
         <span className="graph-legend-item"><span className="graph-swatch graph-swatch--error" /> error</span>
+        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stale" /> presumed stopped</span>
       </div>
 
       <div className="team-groups">

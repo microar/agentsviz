@@ -121,6 +121,44 @@ Error case:
 }
 ```
 
+#### Server-side liveness timeout (no `agent_stop` received)
+
+`agent_stop` is a best-effort signal, not a guarantee: a terminal/session
+window can be closed, a process can be killed, or the network/server can
+be briefly unreachable exactly when a fire-and-forget `agent_stop` POST
+goes out — both `instrumentation/` and `hooks-emitter/` intentionally
+swallow POST failures rather than retrying, so the event can be silently
+lost. Without a fallback, an agent in that situation would stay shown as
+`running` in the Graph/Teams tabs forever, even after the server process
+that ingested its `agent_start` has been running for hours with no other
+sign of life from it.
+
+To guard against that, `server/src/store.ts`'s `StateStore` tracks the
+timestamp of the most recent event of **any** type — `agent_start`,
+`agent_stop`, `tool_call_start`/`_end`, `log`, or `error` — seen for each
+`agentId`. An interval timer in `server/src/index.ts`
+(`AGENT_STALE_CHECK_INTERVAL_MS`, default 30s) sweeps for agents still
+marked `running` whose most recent event is older than
+`AGENT_STALE_TIMEOUT_MS` (default 5 minutes, configurable via that env
+var) and marks them `stopped` in the store, broadcasting the updated
+snapshot to connected WebSocket clients so open dashboards update live.
+
+This is **inferred, not explicit** — the server is guessing based on
+silence, not being told. Consumers of the state store/snapshot (including
+the frontend) can tell the two apart: an agent reaped this way gets
+`inferred: true` on its `AgentState`, plus `stopStatus: "error"` and a
+`stopMessage` of the form `"No activity for 5 minutes — presumed
+stopped"`. A clean `agent_stop` never sets `inferred`. If a genuine
+(delayed) `agent_stop` arrives for an agent that was already reaped this
+way, the explicit event wins and clears `inferred`.
+
+This is deliberately best-effort liveness detection via timeout, not a
+guarantee of correctness — a slow-but-alive agent that goes quiet for
+longer than the configured timeout (e.g. waiting on a long-running tool
+call with no intermediate `log` events) will also be marked `stopped`.
+Tune `AGENT_STALE_TIMEOUT_MS` for your workload if the default doesn't
+fit.
+
 ### `tool_call_start`
 
 Emitted when an agent invokes a tool, before the tool executes.

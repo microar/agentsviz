@@ -187,11 +187,39 @@ for those, use `instrumentation/` instead.
 |-------------------|------------------------------|-----------------------------------------------|--------------|
 | `server`          | `PORT`                       | `4000`                                        | Port the HTTP + WebSocket server listens on. |
 | `server`          | `EVENT_LOG_PATH`             | `server/data/events-<start-timestamp>.jsonl`  | Path to the JSONL event log file. |
+| `server`          | `AGENT_STALE_TIMEOUT_MS`     | `300000` (5 min)                              | How long an agent can go without any event before the server presumes it dead and marks it `stopped` (`inferred: true`) — see "Stale agents" below. |
+| `server`          | `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)                              | How often the server sweeps for stale agents. |
 | `frontend`        | `VITE_WS_URL`                | derived from `window.location` + port `4000`  | WebSocket URL the frontend connects to. Set this if the server isn't on the same host or the default port. |
 | `frontend` (dev)  | *(Vite dev server port)*     | `5173`                                        | Local dev server port, printed on `npm run dev`. |
 | `instrumentation` | `INSTRUMENTATION_SERVER_URL` | `http://localhost:4000/events`                | Where instrumented agents POST events. Can also be set via `configure({ serverUrl })`. |
 | `hooks-emitter`   | `AGENTSVIZ_EVENTS_URL`       | `http://localhost:4000/events`                | Where the hook script POSTs events. |
 | `hooks-emitter`   | `AGENTSVIZ_TEAM`             | *(basename of the session's `cwd`)*           | Overrides the derived `team` field. |
+
+## Stale agents (no `agent_stop` received)
+
+`agent_stop` is fire-and-forget by design (see "Instrumentation guide"
+and "Hooks-based reporting" above), so it can be lost: a terminal/session
+window closed abruptly, a process killed, or the server briefly
+unreachable exactly when the stop POST went out. Without a fallback,
+such an agent would stay shown as `running` in the Graph/Teams tabs
+forever.
+
+To prevent that, the server runs a best-effort liveness sweep
+(`server/src/store.ts`'s `reapStaleAgents`, called on an interval from
+`server/src/index.ts`): any agent that hasn't produced an event of *any*
+kind (not just `agent_stop` — tool calls, logs, and errors all count) for
+`AGENT_STALE_TIMEOUT_MS` (default 5 minutes) is marked `stopped` and
+broadcast live to connected dashboards. This is clearly distinguished
+from a clean stop in the data: reaped agents get `inferred: true` on
+their `AgentState`, plus a `stopMessage` like `"No activity for 5
+minutes — presumed stopped"`. The Graph and Teams tabs render this case
+with its own dashed-amber "presumed stopped" style rather than the solid
+green/red used for a real `agent_stop`. This is inherently best-effort,
+not a guarantee — see `docs/event-schema.md`'s "Server-side liveness
+timeout" section for the full rationale and edge cases (e.g. a
+slow-but-alive agent that goes quiet longer than the timeout will also be
+reaped). Tune `AGENT_STALE_TIMEOUT_MS`/`AGENT_STALE_CHECK_INTERVAL_MS`
+(see the table above) if the defaults don't fit your workload.
 
 ## Troubleshooting
 
