@@ -116,6 +116,11 @@ function applyAgentStop(agents: Record<string, AgentState>, event: LifecycleEven
       stoppedAt: event.timestamp,
       stopStatus: event.status,
       stopMessage: event.message,
+      // An explicit agent_stop is a clean stop even if the agent had
+      // previously been presumed stopped by the server's liveness sweep
+      // (e.g. a late agent_stop arriving after the timeout already
+      // fired) — the explicit signal wins over the inferred one.
+      inferred: undefined,
     },
   }
 }

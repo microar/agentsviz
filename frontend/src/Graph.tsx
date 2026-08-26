@@ -71,6 +71,10 @@ function useStableLayout(ids: string[], center: Point, spacing: number): Map<str
 
 function agentStatusClass(agent: AgentState): string {
   if (agent.status === 'running') return 'graph-node--running'
+  // A presumed (not explicitly reported) stop gets its own look — it's
+  // the server's best guess, not a confirmed clean/error stop — so it
+  // takes priority over stopStatus below.
+  if (agent.inferred) return 'graph-node--stale'
   if (agent.stopStatus === 'error') return 'graph-node--error'
   return 'graph-node--stopped'
 }
@@ -152,6 +156,7 @@ export function GraphTab() {
         <span className="graph-legend-item"><span className="graph-swatch graph-swatch--running" /> running</span>
         <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stopped" /> stopped</span>
         <span className="graph-legend-item"><span className="graph-swatch graph-swatch--error" /> error</span>
+        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stale" /> presumed stopped</span>
         <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--pending" /> tool call active</span>
         <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--settled" /> tool call settled</span>
       </div>
@@ -233,6 +238,7 @@ export function GraphTab() {
                       {agent.agentId}
                       {agent.team ? ` (${agent.team})` : ''} — {agent.status}
                       {agent.stopStatus ? `/${agent.stopStatus}` : ''}
+                      {agent.inferred ? ' (presumed — no agent_stop received)' : ''}
                     </title>
                   </circle>
                   <text className="graph-node-label" y={AGENT_RADIUS + 14} textAnchor="middle">

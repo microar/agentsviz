@@ -7,6 +7,7 @@
   "scripts": {
     "test:e2e": "npm --prefix ../instrumentation install && npm --prefix ../instrumentation run build && npm --prefix ../server install && npm --prefix ../server run build && node e2e-test.mjs",
     "test:hooks-emitter": "npm --prefix ../hooks-emitter install && npm --prefix ../hooks-emitter run build && npm --prefix ../server install && npm --prefix ../server run build && node hooks-emitter-e2e-test.mjs",
-    "test": "npm run test:e2e && npm run test:hooks-emitter"
+    "test:stale-agent": "npm --prefix ../server install && npm --prefix ../server run build && node stale-agent-e2e-test.mjs",
+    "test": "npm run test:e2e && npm run test:hooks-emitter && npm run test:stale-agent"
   }
 }

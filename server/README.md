@@ -22,6 +22,8 @@ to port `4000`).
 |-----------------|--------------------------------------------|--------------|
 | `PORT`          | `4000`                                     | Port the HTTP + WebSocket server listens on. |
 | `EVENT_LOG_PATH`| `server/data/events-<start-timestamp>.jsonl` | Path to the JSONL event log file (see "Event log" below). |
+| `AGENT_STALE_TIMEOUT_MS` | `300000` (5 min)                  | How long an agent can go without any event before it's presumed dead and marked `stopped` (see "Stale agent reaping" below). |
+| `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)              | How often the stale-agent sweep runs. |
 
 ## Scripts
 
@@ -29,6 +31,8 @@ to port `4000`).
 - `npm run build` — type-check and compile to `dist/`
 - `npm run start` — run the compiled server from `dist/`
 - `npm run typecheck` — type-check without emitting
+- `npm test` — run the unit tests (`test/*.test.ts`, via node's built-in
+  test runner)
 
 ## API
 
@@ -117,6 +121,25 @@ persistence. State is lost on process restart.
 - **Teams** (`teams: Record<string, string[]>`) — derived from the `team`
   field on known agents, mapping each team name to the `agentId`s
   currently associated with it.
+
+### Stale agent reaping
+
+`agent_stop` can be lost (killed process, closed terminal, dropped
+fire-and-forget POST — see the root README's "Stale agents" section for
+the full rationale). To keep the dashboard from accumulating
+permanently-`running` ghost agents, `StateStore.reapStaleAgents(timeoutMs,
+now?)` is called on a `setInterval` from `index.ts` (every
+`AGENT_STALE_CHECK_INTERVAL_MS`, default 30s). It marks any `running`
+agent whose most recent event of any kind is older than
+`AGENT_STALE_TIMEOUT_MS` (default 5 min) as `stopped`, with `inferred:
+true`, `stopStatus: "error"`, and an explanatory `stopMessage` — clearly
+distinct from a clean `agent_stop`, which never sets `inferred`. Each
+sweep that reaps at least one agent triggers a fresh snapshot broadcast
+to all connected WebSocket clients, same as a normal state-changing
+event, so open dashboards update live without a page refresh. See
+`server/test/store.test.ts` for the behavior this guarantees (and
+`integration/stale-agent-e2e-test.mjs` for the end-to-end version against
+a real running server).
 
 ## Event log (JSONL)
 

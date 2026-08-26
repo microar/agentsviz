@@ -21,6 +21,16 @@ export interface AgentState {
   stoppedAt?: string;
   stopStatus?: "success" | "error";
   stopMessage?: string;
+  /**
+   * True when this agent was marked "stopped" by the server's liveness
+   * timeout (see `reapStaleAgents` below) rather than by an explicit
+   * `agent_stop` event. Absent (not `false`) on a clean stop, so
+   * consumers can distinguish "we don't know" (undefined, still running)
+   * from "cleanly stopped" (status stopped, inferred absent) from
+   * "presumed stopped" (status stopped, inferred true) with a single
+   * truthy check.
+   */
+  inferred?: true;
 }
 
 export type ToolCallStatus = "pending" | "success" | "error";
@@ -58,6 +68,16 @@ function toolCallKey(agentId: string, tool: string, caller?: string): string {
   return `${agentId}::${caller ?? ""}::${tool}`;
 }
 
+/** Renders a millisecond duration for the reaped-agent stopMessage below. */
+function formatDuration(ms: number): string {
+  if (ms < 60000) {
+    const seconds = Math.round(ms / 1000);
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+  const minutes = Math.round(ms / 60000);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
 export class StateStore {
   private agents = new Map<string, AgentState>();
   // Keyed by a synthetic callId (see ToolCallState.callId), preserving
@@ -67,9 +87,16 @@ export class StateStore {
   // (not-yet-ended) call, so a tool_call_end can find the right entry.
   private pendingByKey = new Map<string, string>();
   private nextCallSeq = 0;
+  // Wall-clock (epoch ms) of the most recent event bearing each agentId,
+  // regardless of event type — this is the liveness clock `reapStaleAgents`
+  // checks. Every event type touches it, per docs/event-schema.md's shared
+  // envelope, since a "log"/"error"/tool-call event is just as good
+  // evidence of life as agent_start/agent_stop.
+  private lastActivityAt = new Map<string, number>();
 
   /** Update state from a single accepted event. */
   applyEvent(event: AgentEvent): void {
+    this.touchActivity(event);
     switch (event.type) {
       case "agent_start":
         this.applyAgentStart(event);
@@ -98,6 +125,12 @@ export class StateStore {
       team: event.team ?? existing?.team,
       caller: event.caller ?? existing?.caller,
       startedAt: event.timestamp,
+      // A fresh agent_start supersedes any earlier presumed-stopped state
+      // (e.g. the same agentId reused for a new run).
+      stoppedAt: undefined,
+      stopStatus: undefined,
+      stopMessage: undefined,
+      inferred: undefined,
     });
   }
 
@@ -105,6 +138,10 @@ export class StateStore {
     const existing = this.agents.get(event.agentId);
     // agent_stop marks the agent stopped in place — it is never removed
     // from the store, even if we've never seen an agent_start for it.
+    // This is a clean, explicit stop, so `inferred` is not set even if the
+    // agent had previously been reaped as stale (e.g. a late agent_stop
+    // arriving after the timeout already fired) — an explicit signal
+    // always wins over an inferred one.
     this.agents.set(event.agentId, {
       agentId: event.agentId,
       status: "stopped",
@@ -115,6 +152,12 @@ export class StateStore {
       stopStatus: event.status,
       stopMessage: event.message,
     });
+  }
+
+  /** Records that an event bearing this agentId was just accepted. */
+  private touchActivity(event: AgentEvent): void {
+    const at = Date.parse(event.timestamp);
+    this.lastActivityAt.set(event.agentId, Number.isNaN(at) ? Date.now() : at);
   }
 
   private applyToolCallStart(event: Extract<AgentEvent, { type: "tool_call_start" }>): void {
@@ -175,6 +218,50 @@ export class StateStore {
       teams[agent.team].push(agent.agentId);
     }
     return teams;
+  }
+
+  /**
+   * Best-effort liveness sweep: any agent still marked "running" that
+   * hasn't produced an event of any kind (agent_start/stop, tool call,
+   * log, error) for at least `timeoutMs` is presumed dead — e.g. its
+   * terminal/session window was closed, its process was killed, or a
+   * fire-and-forget `agent_stop` POST was silently dropped (see
+   * instrumentation/hooks-emitter docs) — and is marked stopped in place.
+   *
+   * This is NOT a substitute for an explicit agent_stop: it's a fallback
+   * so the dashboard doesn't accumulate permanently-"running" ghost nodes
+   * when one never arrives. Reaped agents are flagged `inferred: true`
+   * (see AgentState) so consumers can render them distinctly from a clean
+   * stop, and get `stopStatus: "error"` plus a `stopMessage` explaining
+   * why.
+   *
+   * Call on an interval from the server entrypoint (see
+   * server/src/index.ts); intentionally takes `now` as a parameter so it
+   * can be driven deterministically in tests without real timers.
+   */
+  reapStaleAgents(timeoutMs: number, now: number = Date.now()): AgentState[] {
+    const reaped: AgentState[] = [];
+    for (const agent of this.agents.values()) {
+      if (agent.status !== "running") continue;
+      const lastActivity = this.lastActivityAt.get(agent.agentId);
+      // No activity ever recorded (shouldn't happen once agent_start has
+      // been applied, since that always touches the clock) — skip rather
+      // than reap on missing data.
+      if (lastActivity === undefined) continue;
+      if (now - lastActivity < timeoutMs) continue;
+
+      const updated: AgentState = {
+        ...agent,
+        status: "stopped",
+        stoppedAt: new Date(now).toISOString(),
+        stopStatus: "error",
+        stopMessage: `No activity for ${formatDuration(timeoutMs)} — presumed stopped`,
+        inferred: true,
+      };
+      this.agents.set(agent.agentId, updated);
+      reaped.push(updated);
+    }
+    return reaped;
   }
 
   /** Returns a plain JSON-serializable snapshot of the current state. */

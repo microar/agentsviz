@@ -7,6 +7,12 @@ import { requestLogger } from "./logger.js";
 import { StateStore } from "./store.js";
 
 const PORT = Number(process.env.PORT) || 4000;
+// How long an agent can go without any event (of any type) before the
+// liveness sweep presumes it dead and marks it stopped (see
+// StateStore.reapStaleAgents in store.ts). Default 5 minutes.
+const AGENT_STALE_TIMEOUT_MS = Number(process.env.AGENT_STALE_TIMEOUT_MS) || 5 * 60 * 1000;
+// How often the sweep runs. Default 30 seconds.
+const AGENT_STALE_CHECK_INTERVAL_MS = Number(process.env.AGENT_STALE_CHECK_INTERVAL_MS) || 30 * 1000;
 
 const app = express();
 app.use(express.json());
@@ -67,6 +73,21 @@ wss.on("connection", (socket) => {
     console.log(`WebSocket client disconnected (${wss.clients.size} total)`);
   });
 });
+
+// Best-effort liveness sweep (see StateStore.reapStaleAgents): agents that
+// have gone quiet for AGENT_STALE_TIMEOUT_MS are marked stopped so the
+// Graph/Teams tabs don't accumulate permanently-"running" ghost nodes when
+// a session ends without an explicit agent_stop (killed process, closed
+// terminal, dropped fire-and-forget POST). Reaped agents are broadcast to
+// connected WS clients as a fresh snapshot so open dashboards update live,
+// the same way a newly-connecting client is seeded.
+const staleAgentInterval = setInterval(() => {
+  const reaped = store.reapStaleAgents(AGENT_STALE_TIMEOUT_MS);
+  if (reaped.length === 0) return;
+  console.log(`Reaped ${reaped.length} stale agent(s) after ${AGENT_STALE_TIMEOUT_MS}ms of inactivity`);
+  broadcast({ type: "snapshot", data: store.getSnapshot() });
+}, AGENT_STALE_CHECK_INTERVAL_MS);
+staleAgentInterval.unref();
 
 httpServer.listen(PORT, () => {
   console.log(`Event server listening on http://localhost:${PORT}`);
