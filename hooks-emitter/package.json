@@ -1,0 +1,20 @@
+{
+  "name": "@agentsviz/hooks-emitter",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Claude Code hook script that POSTs schema-valid lifecycle events (see /docs/event-schema.md) to the AgentsViz event server — zero code changes required in the agent.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "agentsviz-hook-emitter": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node test/map.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "@types/node": "^24.13.3"
+  }
+}
