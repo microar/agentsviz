@@ -1,10 +1,26 @@
-# Integration test (issue #10)
+# Integration tests (issues #10, #32)
 
-End-to-end integration test that exercises the real pieces built for
-issues #3, #4, and #6 together: the **instrumentation helper**
-(`instrumentation/`), the **event server**'s HTTP ingest + WebSocket
-broadcast + in-memory state store (`server/`), and the schema they both
-speak (`/docs/event-schema.md`).
+End-to-end integration tests that exercise the real pieces built for
+issues #3, #4, #6, and #29 together: the **instrumentation helper**
+(`instrumentation/`), the **hooks-emitter** script (`hooks-emitter/`),
+the **event server**'s HTTP ingest + WebSocket broadcast + in-memory
+state store (`server/`), and the schema they all speak
+(`/docs/event-schema.md`).
+
+There are two independent producers of the same event schema, and two
+matching test files:
+
+- `e2e-test.mjs` (issue #10) — the `instrumentation/` library, called
+  directly the way a real agent's own code would call it.
+- `hooks-emitter-e2e-test.mjs` (issue #32) — the `hooks-emitter/` script,
+  driven the way Claude Code's own harness drives it: spawned as a real
+  child process per lifecycle event, fed one JSON hook payload on stdin,
+  fire-and-forget (no HTTP response visibility, no waiting). See that
+  file's header comment and the section below for what's different about
+  testing this path.
+
+Both start a real, unmodified event server and assert against its real
+WebSocket broadcast stream and state snapshot — no mocks, no stubs.
 
 ## What it does
 
@@ -49,26 +65,89 @@ speak (`/docs/event-schema.md`).
 - **Team grouping is correct**: both agents appear under the shared team
   in the snapshot's `teams` map.
 
+## `hooks-emitter-e2e-test.mjs` (issue #32)
+
+`hooks-emitter/test/map.test.mjs` already unit tests the pure hook
+payload → event mapping logic in isolation (no I/O). This test instead
+proves the *whole script* works against a *real running server*, driven
+exactly the way Claude Code's own harness drives a hook:
+
+1. Starts the real, unmodified event server as a child process, and opens
+   a live WebSocket client, same as `e2e-test.mjs` above.
+2. Spawns the real, compiled `hooks-emitter/dist/index.js` as a fresh
+   child process once per hook firing — never calling its internal
+   functions directly — writing a realistic synthetic Claude Code hook
+   payload to its stdin and letting it exit on its own, exactly as the
+   Claude Code harness would invoke it.
+3. Drives a plausible single-session sequence covering all 4 mapped hook
+   types plus a Task-tool sub-agent delegation: `SessionStart` →
+   `PreToolUse`/`PostToolUse` (Bash) → `PreToolUse` (Task, spawns a
+   sub-agent) → `PreToolUse`/`PostToolUse` (Read, inside the sub-agent,
+   carrying `agent_id`) → `SubagentStop` → `PostToolUse` (Task ends) →
+   `Stop`.
+4. For each hook firing, waits for the resulting event to arrive over the
+   live WebSocket before sending the next one — this is also how the test
+   observes HTTP-level acceptance, since the hook script's own contract
+   (#29) is fire-and-forget: it never surfaces the POST's response to its
+   own stdout or exit code (the actual network call happens in a detached
+   child process the script does not wait for). The server's own request
+   log (`POST /events 202` lines on its stdout) is asserted separately as
+   a second, independent confirmation signal.
+5. Reconnects for a fresh state snapshot and asserts final agent/tool-call
+   state, same as `e2e-test.mjs`.
+6. Adds an unreachable-server case: points `$AGENTSVIZ_EVENTS_URL` at a
+   closed port (`http://127.0.0.1:1/events`) and asserts the hook process
+   still exits `0` promptly with empty stdout/stderr — the fire-and-forget
+   contract from #29's acceptance criteria.
+
+### What's asserted
+
+- **Payload mapping matches `/docs/event-schema.md`**: every field on
+  every broadcast event (`type`, `agentId`, `caller`, `team`, `tool`,
+  `input`, `status`, `result`, `message`) is checked against the exact
+  value the corresponding hook payload should produce. This test fails
+  loudly if `hooks-emitter/src/map.ts`'s mapping ever drifts from the
+  schema.
+- **Server-level acceptance**: 202-accepted count in the server's request
+  log matches the number of hooks fired.
+- **Sub-agent correlation (#30)**: the sub-agent's events get a distinct,
+  compound `agentId` (`${session_id}-${agent_id}`), a `caller` that links
+  back to the parent session, and the same derived `team` as the parent
+  (via shared `cwd`) — and its whole lifecycle is causally nested inside
+  the parent's `Task` `tool_call_start`/`tool_call_end` bracket.
+- **Final snapshot correctness**: both the top-level agent and the
+  sub-agent appear with `status: "stopped"`/`stopStatus: "success"`, and
+  their tool calls are recorded under the right `agentId`/`caller`
+  (notably: the sub-agent never gets its own `SessionStart` hook per the
+  Claude Code docs, so it only enters the store via its `SubagentStop` —
+  this test explicitly verifies that "stopped with no prior running
+  state" path works).
+- **Fire-and-forget contract holds**: the hook process always exits `0`
+  with no stderr, reachable or not.
+
 ## How to run
 
 ```bash
 cd integration
-npm run test:e2e
+npm test               # both suites: instrumentation (#10) + hooks-emitter (#32)
+npm run test:e2e           # instrumentation library only
+npm run test:hooks-emitter # hooks-emitter script only
 ```
 
-This installs/builds `instrumentation` and `server` first (so it always
-runs against current source, not stale `dist/` output), then runs the
-test. It starts its own server on a free port, so it's safe to run
-alongside a `server` you already have running in dev mode elsewhere. The
-test cleans up its child server process on both success and failure.
+Each script installs/builds its own producer package (`instrumentation`
+or `hooks-emitter`) and `server` first (so it always runs against current
+source, not stale `dist/` output), then runs its test. Each starts its
+own server on a free port, so both are safe to run alongside a `server`
+you already have running in dev mode elsewhere, and alongside each other.
+Every server child process is cleaned up on both success and failure.
 
 Exit code is `0` on success, `1` with a per-assertion failure list on
 any failure.
 
 ## Known gaps
 
-This test satisfies the spirit of issue #10's acceptance criteria but
-has real, deliberate limitations:
+These tests satisfy the spirit of issues #10 and #32's acceptance
+criteria but have real, deliberate limitations:
 
 - **Simulated, not real-API agents.** This does not invoke actual
   Claude Code / Claude API–backed agents. Doing so in an automated,
@@ -106,3 +185,18 @@ has real, deliberate limitations:
   test only checks in-memory state during the life of one server
   process; it doesn't test recovery/replay after a restart (the server
   has none — see `server/README.md`).
+- **Synthetic hook payloads, not a real Claude Code harness.**
+  `hooks-emitter-e2e-test.mjs` hand-authors realistic hook JSON based on
+  the [documented hook schema](https://code.claude.com/docs/en/hooks)
+  rather than capturing it from a live Claude Code session, for the same
+  cost/determinism reasons `e2e-test.mjs` doesn't invoke real agents. It
+  does spawn the real, compiled `hooks-emitter` script as an actual child
+  process reading real stdin (not calling its internal functions), which
+  is the part that most needs proving — but if a future Claude Code
+  harness version changes the hook payload shape itself, this test won't
+  catch that until the sample payloads here are updated to match.
+- **One hook process per event, sequential.** Real Claude Code hooks for
+  concurrently-running sub-agents could in principle fire close together
+  from separate OS processes; this test fires them one at a time and
+  waits for each to be broadcast before sending the next, for the same
+  determinism reasons `e2e-test.mjs`'s `emit()` helper does.
