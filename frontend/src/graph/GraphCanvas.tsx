@@ -42,6 +42,16 @@ export interface GraphCanvasProps {
   edges: Edge[]
   selectedAgentId: string | null
   onSelectAgent: (agentId: string) => void
+  /**
+   * True when rendering a reconstructed historical snapshot rather than
+   * live state (issue #43). Skips the #39 fade-out-on-stop timer entirely:
+   * a historical snapshot already reflects state exactly as of the
+   * scrubbed instant, so a "stopped" agent in that snapshot is shown at
+   * full opacity regardless of how long ago (relative to *now*) it
+   * actually stopped — that's the point of scrubbing back to see agents
+   * that would already be faded/gone in the live view.
+   */
+  historyMode?: boolean
 }
 
 function readCssColor(canvas: HTMLCanvasElement): { text: string; muted: string } {
@@ -52,10 +62,22 @@ function readCssColor(canvas: HTMLCanvasElement): { text: string; muted: string 
   }
 }
 
-export function GraphCanvas({ allAgents, toolNames, edges, selectedAgentId, onSelectAgent }: GraphCanvasProps) {
+export function GraphCanvas({
+  allAgents,
+  toolNames,
+  edges,
+  selectedAgentId,
+  onSelectAgent,
+  historyMode = false,
+}: GraphCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const camera = useCanvasCamera(canvasRef)
+  // Read every frame/click by the render loop and hit-test handler below —
+  // kept in a ref (rather than closed over directly) purely so those
+  // effects, which intentionally run once on mount, still see live updates.
+  const historyModeRef = useRef(historyMode)
+  historyModeRef.current = historyMode
   // Bumped by a ResizeObserver below so the auto-fit effect re-runs once the
   // wrapper actually has its final flex-layout size, not just whatever size
   // (possibly 0, possibly a pre-layout guess) it had on first paint.
@@ -132,7 +154,7 @@ export function GraphCanvas({ allAgents, toolNames, edges, selectedAgentId, onSe
       const rect = canvas!.getBoundingClientRect()
       const world = camera.screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
       const visibleIds = agentsRef.current
-        .filter((a) => !computeFade(a, Date.now()).removed)
+        .filter((a) => historyModeRef.current || !computeFade(a, Date.now()).removed)
         .map((a) => a.agentId)
       const hit = hitTestAgent(world, agentPositionsRef.current, visibleIds)
       if (hit) onSelectAgent(hit)
@@ -185,7 +207,10 @@ export function GraphCanvas({ allAgents, toolNames, edges, selectedAgentId, onSe
 
       const alphaByAgent = new Map<string, number>()
       for (const agent of agents) {
-        alphaByAgent.set(agent.agentId, computeFade(agent, nowMs).alpha)
+        // History mode (issue #43): a reconstructed snapshot is already
+        // "as of" the scrubbed instant, so every agent in it renders at
+        // full opacity — no live fade-out timer applies.
+        alphaByAgent.set(agent.agentId, historyModeRef.current ? 1 : computeFade(agent, nowMs).alpha)
       }
 
       updateEdgeAnimStates(edgeAnimStatesRef.current, edgeList, perfNow)
@@ -239,13 +264,18 @@ export function GraphCanvas({ allAgents, toolNames, edges, selectedAgentId, onSe
   // keyboard/screen reader now that the graph itself is a flat canvas with
   // no individually-focusable DOM nodes.
   const visibleAgents = useMemo(
-    () => allAgents.filter((a) => !computeFade(a, Date.now()).removed),
-    [allAgents],
+    () => allAgents.filter((a) => historyMode || !computeFade(a, Date.now()).removed),
+    [allAgents, historyMode],
   )
 
   return (
-    <div className="graph-canvas-wrap" ref={wrapperRef}>
-      <canvas ref={canvasRef} className="graph-canvas-el" role="img" aria-label="Live agent graph" />
+    <div className={`graph-canvas-wrap${historyMode ? ' graph-canvas-wrap--history' : ''}`} ref={wrapperRef}>
+      <canvas
+        ref={canvasRef}
+        className="graph-canvas-el"
+        role="img"
+        aria-label={historyMode ? 'Historical agent graph (viewing past state)' : 'Live agent graph'}
+      />
       <div className="sr-only" aria-label="Agents (keyboard-accessible list)">
         {visibleAgents.map((agent) => (
           <button key={agent.agentId} type="button" onClick={() => onSelectAgent(agent.agentId)}>

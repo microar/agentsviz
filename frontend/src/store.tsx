@@ -49,19 +49,31 @@ import {
 
 const MAX_LOG_ENTRIES = 500
 const MAX_TOOL_CALLS = 500
+// Raw lifecycle events kept around purely for the history/timeline scrubber
+// (issue #43) — see `useEventTimeline` in `graph/useEventTimeline.ts`, which
+// combines these (events seen live since this tab connected) with a
+// one-time fetch of `/events/history` (events recorded before that) to
+// cover the whole session's recorded range. Capped generously higher than
+// MAX_TOOL_CALLS/MAX_LOG_ENTRIES since a single event here can represent
+// several derived agent/tool-call/log entries.
+const MAX_RAW_EVENTS = 5000
 
 export interface EventStoreState {
   connectionStatus: ConnectionStatus
   agents: Record<string, AgentState>
   toolCalls: ToolCallState[]
   logs: LogEntry[]
+  /** Raw events observed live since this tab's WS connection was established. */
+  rawEvents: LifecycleEvent[]
 }
 
-const initialState: EventStoreState = {
+/** Exported for the history/timeline scrubber (issue #43) — see `useEventTimeline.ts`. */
+export const initialState: EventStoreState = {
   connectionStatus: 'connecting',
   agents: {},
   toolCalls: [],
   logs: [],
+  rawEvents: [],
 }
 
 type Action =
@@ -196,7 +208,16 @@ function applyLogOrError(logs: LogEntry[], event: LifecycleEvent): LogEntry[] {
   return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next
 }
 
-function applyEvent(state: EventStoreState, event: LifecycleEvent): EventStoreState {
+/**
+ * Folds a single lifecycle event into store state. Exported (issue #43) so
+ * the history/timeline scrubber (see `useEventHistory.ts`) can replay the
+ * raw event log client-side through the exact same reducer that drives
+ * live WebSocket updates, rather than duplicating this logic — the only
+ * difference for history replay is which events get folded in (everything
+ * up to the scrub cutoff) and that it starts from `initialState` each time
+ * instead of a running `useReducer` state.
+ */
+export function applyEvent(state: EventStoreState, event: LifecycleEvent): EventStoreState {
   switch (event.type) {
     case 'agent_start':
       return { ...state, agents: applyAgentStart(state.agents, event) }
@@ -229,8 +250,14 @@ function reducer(state: EventStoreState, action: Action): EventStoreState {
           : action.toolCalls
       return { ...state, agents, toolCalls }
     }
-    case 'event':
-      return applyEvent(state, action.event)
+    case 'event': {
+      const next = applyEvent(state, action.event)
+      const rawEvents = [...next.rawEvents, action.event]
+      return {
+        ...next,
+        rawEvents: rawEvents.length > MAX_RAW_EVENTS ? rawEvents.slice(rawEvents.length - MAX_RAW_EVENTS) : rawEvents,
+      }
+    }
     default:
       return state
   }

@@ -1,8 +1,9 @@
 import { createServer } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
 import express, { type Request, type Response } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { validateEvent, type AgentEvent } from "./eventSchema.js";
-import { logEvent } from "./eventLogger.js";
+import { logEvent, getLogFilePath } from "./eventLogger.js";
 import { requestLogger } from "./logger.js";
 import { StateStore } from "./store.js";
 
@@ -17,6 +18,16 @@ const AGENT_STALE_CHECK_INTERVAL_MS = Number(process.env.AGENT_STALE_CHECK_INTER
 const app = express();
 app.use(express.json());
 app.use(requestLogger);
+// Permissive CORS: this is a local/internal dev dashboard with no auth, and
+// the frontend (Vite dev server) and this server run on different ports in
+// development. Needed specifically since issue #43's `/events/history` is
+// fetched directly by the browser (unlike the WS connection, which isn't
+// subject to CORS) — without this, a cross-port dev setup gets silently
+// blocked by the browser rather than a clear server-side error.
+app.use((_req: Request, res: Response, next: (err?: unknown) => void) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  next();
+});
 
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
@@ -51,6 +62,45 @@ app.post("/events", (req: Request, res: Response) => {
   // cannot delay the broadcast above or this response.
   logEvent(event);
   res.status(202).json({ status: "accepted" });
+});
+
+// Read-back of this run's recorded event stream (issue #43), for the
+// frontend's history/timeline scrubber to reconstruct past Graph state
+// from. Reads the same JSONL file `eventLogger.ts` is appending accepted
+// events to for this server process (see `getLogFilePath`) and returns it
+// as a JSON array of raw events, oldest first — the same shape/order the
+// events were originally POSTed to /events in.
+//
+// Reconstruction itself (folding these events into agent/tool-call state
+// as of a given timestamp) happens client-side rather than here: the
+// frontend already carries its own small `applyEvent` reducer (mirroring
+// `StateStore.applyEvent`) to apply live WS events incrementally, and
+// reusing that same reducer for history avoids a network round-trip (and
+// re-parsing this whole file) on every scrub-drag frame. This route stays
+// a dumb, cheap file read. Multi-session history (past `events-*.jsonl`
+// files from earlier server runs) is explicitly out of scope — only the
+// active log file for the current process is read.
+app.get("/events/history", (_req: Request, res: Response) => {
+  const logPath = getLogFilePath();
+  if (!existsSync(logPath)) {
+    // Nothing logged yet this run (no event has been accepted since
+    // startup) — an empty history, not an error.
+    res.status(200).json([]);
+    return;
+  }
+
+  try {
+    const raw = readFileSync(logPath, "utf8");
+    const events = raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line));
+    res.status(200).json(events);
+  } catch (err) {
+    console.warn(`Failed to read event history (${logPath}):`, err);
+    res.status(500).json({ error: "Failed to read event history" });
+  }
 });
 
 // Fallback JSON body-parse error handler (e.g. malformed JSON payloads).
