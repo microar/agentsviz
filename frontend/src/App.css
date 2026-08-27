@@ -289,137 +289,52 @@
   background: rgba(127, 127, 127, 0.5);
 }
 
+.graph-hint {
+  margin-bottom: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
+/* Canvas-based graph (issue #40) — see frontend/src/graph/GraphCanvas.tsx.
+   All per-node/per-edge status styling (running pulse, stopped/error/stale
+   colors, pending-call dashes, fade-out-on-stop from #37/#39) is now drawn
+   directly onto the canvas each frame (see graph/colors.ts, draw-agents.ts,
+   draw-edges.ts, fade.ts) rather than expressed as CSS classes — the rules
+   below only cover the wrapper/canvas element itself and the visually
+   hidden keyboard/screen-reader fallback list of agents.  */
 .graph-canvas-wrap {
+  position: relative;
   width: 100%;
-  overflow-x: auto;
+  height: 60vh;
+  min-height: 420px;
+  overflow: hidden;
   border: 1px solid rgba(127, 127, 127, 0.2);
   border-radius: 8px;
   background: rgba(127, 127, 127, 0.03);
+  touch-action: none;
 }
 
-.graph-canvas {
+.graph-canvas-el {
   display: block;
   width: 100%;
-  height: auto;
-  min-width: 640px;
+  height: 100%;
+  cursor: grab;
 }
 
-.graph-agent-node {
-  cursor: pointer;
+.graph-canvas-el:active {
+  cursor: grabbing;
 }
 
-.graph-agent-node:focus-visible {
-  outline: 2px solid #646cff;
-  outline-offset: 2px;
-}
-
-/* A stopped agent (clean, error, or #37's inferred/stale stop) fades out and
-   is removed from the Graph view within ~5s of stopping (issue #39) instead
-   of accumulating forever — see useGraphFadeOut in Graph.tsx. The duration
-   is set per-node via --graph-fade-duration so an agent that was already
-   partway through its window when the tab loaded still finishes fading at
-   the right wall-clock time instead of restarting a full 5s. */
-.graph-agent-node--fading {
-  opacity: 0;
-  transition: opacity var(--graph-fade-duration, 5000ms) linear;
-  pointer-events: none;
-}
-
-.graph-node {
-  fill: rgba(127, 127, 127, 0.35);
-  stroke: rgba(127, 127, 127, 0.6);
-  stroke-width: 2;
-  transition: fill 0.2s ease, stroke 0.2s ease;
-}
-
-.graph-node--running {
-  fill: rgba(100, 108, 255, 0.25);
-  stroke: #646cff;
-  animation: graph-pulse 1.6s ease-in-out infinite;
-}
-
-.graph-node--stopped {
-  fill: rgba(22, 163, 74, 0.15);
-  stroke: #16a34a;
-}
-
-.graph-node--error {
-  fill: rgba(220, 38, 38, 0.18);
-  stroke: #dc2626;
-}
-
-/* Presumed-stopped by the server's liveness timeout (no agent_stop
-   received) — dashed amber stroke to read as "unconfirmed", distinct from
-   both the solid green clean-stop and solid red error-stop looks. */
-.graph-node--stale {
-  fill: rgba(217, 119, 6, 0.12);
-  stroke: #d97706;
-  stroke-dasharray: 4 3;
-}
-
-@keyframes graph-pulse {
-  0%, 100% {
-    stroke-width: 2;
-    stroke-opacity: 1;
-  }
-  50% {
-    stroke-width: 3.5;
-    stroke-opacity: 0.6;
-  }
-}
-
-.graph-node-label {
-  font-size: 10px;
-  fill: currentColor;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.graph-node-team {
-  font-size: 9px;
-  fill: var(--color-text-muted, #6b7280);
-}
-
-.graph-tool-rect {
-  fill: rgba(127, 127, 127, 0.12);
-  stroke: rgba(127, 127, 127, 0.55);
-  stroke-width: 1.5;
-}
-
-.graph-tool-label {
-  font-size: 9px;
-  fill: var(--color-text-muted, #6b7280);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.graph-edge {
-  stroke: rgba(127, 127, 127, 0.35);
-  stroke-width: 1.5;
-  fill: none;
-}
-
-.graph-edge--pending {
-  stroke: #d97706;
-  stroke-width: 2.5;
-  stroke-dasharray: 6 4;
-  animation: graph-edge-flow 0.8s linear infinite;
-}
-
-.graph-edge--settled {
-  stroke: rgba(127, 127, 127, 0.4);
-}
-
-.graph-edge--success {
-  stroke: rgba(22, 163, 74, 0.55);
-}
-
-.graph-edge--error {
-  stroke: rgba(220, 38, 38, 0.55);
-}
-
-@keyframes graph-edge-flow {
-  to {
-    stroke-dashoffset: -10;
-  }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Agent detail drawer (issue #12) */
