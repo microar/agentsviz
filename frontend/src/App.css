@@ -313,6 +313,18 @@
   outline-offset: 2px;
 }
 
+/* A stopped agent (clean, error, or #37's inferred/stale stop) fades out and
+   is removed from the Graph view within ~5s of stopping (issue #39) instead
+   of accumulating forever — see useGraphFadeOut in Graph.tsx. The duration
+   is set per-node via --graph-fade-duration so an agent that was already
+   partway through its window when the tab loaded still finishes fading at
+   the right wall-clock time instead of restarting a full 5s. */
+.graph-agent-node--fading {
+  opacity: 0;
+  transition: opacity var(--graph-fade-duration, 5000ms) linear;
+  pointer-events: none;
+}
+
 .graph-node {
   fill: rgba(127, 127, 127, 0.35);
   stroke: rgba(127, 127, 127, 0.6);
