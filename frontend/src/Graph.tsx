@@ -23,12 +23,101 @@
  * ~20-line formula covers without adding a dependency.
  */
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useEventStore } from './store'
 import type { AgentState, ToolCallState } from './types'
 import { AgentDrawer } from './AgentDrawer'
 
 const GOLDEN_ANGLE_RAD = Math.PI * (3 - Math.sqrt(5)) // ~137.5deg, in radians
+
+// How long a stopped agent lingers, fading out, before it's dropped from the
+// Graph view entirely (issue #39). Logs/Teams keep the full history — this
+// is purely a Graph-tab presentation window.
+const FADE_MS = 5000
+
+/**
+ * Tracks which stopped agents are currently fading out of the Graph view,
+ * and which have finished fading and should be dropped from it entirely.
+ * This is local UI state layered on top of the store's `agents` — the store
+ * itself keeps every agent forever (for Logs/Teams/replay); this hook only
+ * decides what the *Graph* currently renders.
+ *
+ * Fade timing is anchored to `stoppedAt` rather than "time this hook first
+ * saw the agent stopped", so an agent that was already stopped in the
+ * initial snapshot (or was stopped while the tab was in another view) still
+ * disappears ~5s after it actually stopped, not 5s after this component
+ * happened to mount/re-render.
+ *
+ * An agent going back to `running` (a reconnect/resume — shouldn't normally
+ * happen, but handled defensively per the issue) cancels any pending fade
+ * or removal so it reappears as a normal active node.
+ */
+function useGraphFadeOut(agents: AgentState[]): {
+  fadingMs: Record<string, number>
+  isRemoved: (agentId: string) => boolean
+} {
+  const [fadingMs, setFadingMs] = useState<Record<string, number>>({})
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set())
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  useEffect(() => {
+    const timers = timersRef.current
+    const now = Date.now()
+
+    for (const agent of agents) {
+      const id = agent.agentId
+      if (agent.status === 'stopped') {
+        if (timers.has(id)) continue // fade already scheduled for this stop
+
+        const stoppedAtMs = agent.stoppedAt ? Date.parse(agent.stoppedAt) : now
+        const remaining = FADE_MS - (now - (Number.isNaN(stoppedAtMs) ? now : stoppedAtMs))
+
+        if (remaining <= 0) {
+          setRemovedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+          continue
+        }
+
+        setFadingMs((prev) => (prev[id] === remaining ? prev : { ...prev, [id]: remaining }))
+        timers.set(
+          id,
+          setTimeout(() => {
+            timers.delete(id)
+            setRemovedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+          }, remaining),
+        )
+      } else {
+        // Running (again) — cancel any fade/removal so the node reappears.
+        const timer = timers.get(id)
+        if (timer) {
+          clearTimeout(timer)
+          timers.delete(id)
+        }
+        setFadingMs((prev) => {
+          if (!(id in prev)) return prev
+          const { [id]: _unused, ...rest } = prev
+          return rest
+        })
+        setRemovedIds((prev) => {
+          if (!prev.has(id)) return prev
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agents])
+
+  useEffect(() => {
+    const timers = timersRef.current
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+    }
+  }, [])
+
+  return { fadingMs, isRemoved: (agentId) => removedIds.has(agentId) }
+}
 
 interface Point {
   x: number
@@ -98,7 +187,13 @@ export function GraphTab() {
   // it either way (issue #12 acceptance criterion).
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
 
-  const agentList = useMemo(() => Object.values(agents), [agents])
+  const allAgents = useMemo(() => Object.values(agents), [agents])
+  // The Graph tab is a *live* view: it defaults to showing only active
+  // agents, fading a just-stopped one out over ~5s rather than letting
+  // every agent that's ever run accumulate on screen forever (issue #39).
+  // Logs/Teams are unaffected — they still read straight from `agents`.
+  const { fadingMs, isRemoved } = useGraphFadeOut(allAgents)
+  const agentList = useMemo(() => allAgents.filter((a) => !isRemoved(a.agentId)), [allAgents, isRemoved])
   const agentIds = useMemo(() => agentList.map((a) => a.agentId), [agentList])
   const toolNames = useMemo(() => {
     const seen = new Set<string>()
@@ -132,10 +227,14 @@ export function GraphTab() {
   }, [agentPositions, toolPositions])
 
   if (agentList.length === 0) {
+    const message =
+      allAgents.length === 0
+        ? 'No agents yet — waiting for live data.'
+        : 'No active agents right now — stopped agents fade out of this view within 5s.'
     return (
       <div>
         <h2>Graph</h2>
-        <p className="empty-state">No agents yet — waiting for live data.</p>
+        <p className="empty-state">{message}</p>
       </div>
     )
   }
@@ -145,7 +244,7 @@ export function GraphTab() {
       <h2>Graph</h2>
       <ul className="stat-list graph-stats">
         <li>
-          <strong>{agentList.length}</strong> agent{agentList.length === 1 ? '' : 's'} seen ({running} running)
+          <strong>{agentList.length}</strong> agent{agentList.length === 1 ? '' : 's'} shown ({running} running)
         </li>
         <li>
           <strong>{toolCalls.length}</strong> tool call{toolCalls.length === 1 ? '' : 's'} recorded
@@ -221,11 +320,14 @@ export function GraphTab() {
             {agentList.map((agent) => {
               const pos = agentPositions.get(agent.agentId)
               if (!pos) return null
+              const fadeMs = fadingMs[agent.agentId]
+              const fading = fadeMs !== undefined
               return (
                 <g
                   key={agent.agentId}
                   transform={`translate(${pos.x}, ${pos.y})`}
-                  className="graph-agent-node"
+                  className={`graph-agent-node${fading ? ' graph-agent-node--fading' : ''}`}
+                  style={fading ? ({ '--graph-fade-duration': `${fadeMs}ms` } as CSSProperties) : undefined}
                   onClick={() => setSelectedAgentId(agent.agentId)}
                   role="button"
                   tabIndex={0}
