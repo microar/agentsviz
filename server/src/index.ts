@@ -16,7 +16,15 @@ const AGENT_STALE_TIMEOUT_MS = Number(process.env.AGENT_STALE_TIMEOUT_MS) || 5 *
 const AGENT_STALE_CHECK_INTERVAL_MS = Number(process.env.AGENT_STALE_CHECK_INTERVAL_MS) || 30 * 1000;
 
 const app = express();
-app.use(express.json());
+// body-parser's default limit is 100kb, which is easy for a legitimate event
+// to exceed: the schema allows tool_call_end's `result` field to be an
+// arbitrary string/object/array (see docs/event-schema.md), and a real tool
+// result (e.g. a file read, command output, or API response) can plausibly
+// run well past 100kb of JSON. 5mb is a generous ceiling for this schema's
+// realistic payloads while still bounding memory per request; configurable
+// via env var following the PORT/AGENT_STALE_TIMEOUT_MS pattern above.
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "5mb";
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use(requestLogger);
 // Permissive CORS: this is a local/internal dev dashboard with no auth, and
 // the frontend (Vite dev server) and this server run on different ports in
@@ -103,10 +111,18 @@ app.get("/events/history", (_req: Request, res: Response) => {
   }
 });
 
-// Fallback JSON body-parse error handler (e.g. malformed JSON payloads).
+// Fallback body-parser error handler (malformed JSON, oversized payloads).
 app.use((err: unknown, _req: Request, res: Response, next: (err?: unknown) => void) => {
-  if (err && typeof err === "object" && "type" in err && (err as { type?: string }).type === "entity.parse.failed") {
+  const type = err && typeof err === "object" && "type" in err ? (err as { type?: string }).type : undefined;
+  if (type === "entity.parse.failed") {
     res.status(400).json({ error: "Invalid event", details: ["Request body must be valid JSON."] });
+    return;
+  }
+  if (type === "entity.too.large") {
+    res.status(413).json({
+      error: "Payload too large",
+      details: [`Request body must not exceed ${JSON_BODY_LIMIT}.`],
+    });
     return;
   }
   next(err);
