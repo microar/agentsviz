@@ -49,6 +49,13 @@ export function GraphTab() {
   }, [scrubAtMs, timelineEvents])
 
   const liveAllAgents = useMemo(() => Object.values(agents), [agents])
+  // Every agentId ever seen this session (issue #49) — the store never
+  // removes an agent entry once seen (see store.tsx), so `agents`' keys are
+  // always the full history, not just what's currently displayed. Passed to
+  // GraphCanvas so it can recognize a sub-agent (caller names a known
+  // agentId) even after the top-level agent that spawned it has itself
+  // faded out of the filtered `agentList` below.
+  const knownAgentIds = useMemo(() => new Set(Object.keys(agents)), [agents])
   // The Graph tab is a *live* view: it defaults to showing only active
   // agents, removing a just-stopped one promptly (a brief, barely
   // perceptible fade — see FADE_MS in graph/fade.ts, shortened from the
@@ -145,6 +152,7 @@ export function GraphTab() {
             edges={edges}
             selectedAgentId={selectedAgentId}
             onSelectAgent={setSelectedAgentId}
+            knownAgentIds={knownAgentIds}
             historyMode={isHistory}
           />
         </>

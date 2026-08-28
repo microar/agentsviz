@@ -265,16 +265,24 @@
   box-shadow: 0 0 0 2px rgba(100, 108, 255, 0.25);
 }
 
+/*
+ * Swatch colors below are kept in sync by hand with `COLORS` in
+ * `graph/colors.ts` (the single source of truth for actual canvas node/edge
+ * colors) — each swatch's solid color is that status's `*Stroke` value,
+ * the more visually prominent of the fill/stroke pair on canvas (issue
+ * #49; see `frontend/scripts/verify-legend-colors.mjs`, which asserts these
+ * two files agree, to catch drift going forward).
+ */
 .graph-swatch--stopped {
-  background: rgba(127, 127, 127, 0.5);
+  background: #16a34a; /* COLORS.stoppedStroke */
 }
 
 .graph-swatch--error {
-  background: #dc2626;
+  background: #dc2626; /* COLORS.errorStroke */
 }
 
 .graph-swatch--stale {
-  background: rgba(217, 119, 6, 0.5);
+  background: #d97706; /* COLORS.staleStroke */
   border: 1px dashed #d97706;
 }
 
@@ -282,11 +290,11 @@
   display: inline-block;
   width: 1.1rem;
   height: 0.15rem;
-  background: #d97706;
+  background: #d97706; /* COLORS.edgePending */
 }
 
 .graph-edge-swatch--settled {
-  background: rgba(127, 127, 127, 0.5);
+  background: rgba(127, 127, 127, 0.4); /* COLORS.edgeSettled */
 }
 
 .graph-hint {
