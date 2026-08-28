@@ -19,6 +19,15 @@
  * "rotate" — old sessions are never appended to. The log directory is
  * gitignored, so clearing between sessions is as simple as deleting the
  * directory's contents.
+ *
+ * `getLogFilePath` exposes the resolved path of the *current* process's
+ * log file (see issue #43) so other modules — namely the `/events/history`
+ * route in index.ts — can read back this run's recorded events for replay
+ * without duplicating the path-resolution logic above. It shares the same
+ * lazily-resolved `resolvedPath` that `logEvent`/`getStream` use, so calling
+ * it before any event has been logged still returns the exact path this
+ * process will (or already does) write to, rather than resolving a second,
+ * differently-timestamped default path.
  */
 
 import { existsSync, mkdirSync, type WriteStream } from "node:fs";
@@ -40,11 +49,19 @@ function resolveLogPath(): string {
 let stream: WriteStream | undefined;
 let resolvedPath: string | undefined;
 
+/** Resolve (once) and cache the current process's log file path. */
+function ensureResolvedPath(): string {
+  if (!resolvedPath) {
+    resolvedPath = resolveLogPath();
+  }
+  return resolvedPath;
+}
+
 /** Lazily create the write stream (and its directory) on first use. */
 function getStream(): WriteStream {
   if (stream) return stream;
 
-  resolvedPath = resolveLogPath();
+  const resolvedPath = ensureResolvedPath();
   const dir = path.dirname(resolvedPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -78,4 +95,15 @@ export function logEvent(event: unknown): void {
   } catch (err) {
     console.warn("Event log write failed:", err);
   }
+}
+
+/**
+ * The absolute path of the JSONL log file this process is (or will be)
+ * writing accepted events to. Does not create the file or its directory —
+ * that only happens lazily on the first `logEvent` call (see `getStream`)
+ * — so a caller reading history before any event has been logged should
+ * expect the file may not exist yet.
+ */
+export function getLogFilePath(): string {
+  return ensureResolvedPath();
 }
