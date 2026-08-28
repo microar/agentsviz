@@ -43,6 +43,16 @@ export interface GraphCanvasProps {
   selectedAgentId: string | null
   onSelectAgent: (agentId: string) => void
   /**
+   * Every agentId ever seen this session (issue #49) — used by `computeFade`
+   * to recognize a sub-agent (an agent whose `caller` names another agent in
+   * this set) so it can be exempted from fade-out/removal. Deliberately the
+   * *full* session history, not just `allAgents` (which, in live mode, is
+   * already filtered down to not-yet-removed agents) — a sub-agent must stay
+   * recognized as such even after the top-level agent that spawned it has
+   * itself faded out of `allAgents`.
+   */
+  knownAgentIds: ReadonlySet<string>
+  /**
    * True when rendering a reconstructed historical snapshot rather than
    * live state (issue #43). Skips the #39 fade-out-on-stop timer entirely:
    * a historical snapshot already reflects state exactly as of the
@@ -68,6 +78,7 @@ export function GraphCanvas({
   edges,
   selectedAgentId,
   onSelectAgent,
+  knownAgentIds,
   historyMode = false,
 }: GraphCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
@@ -84,6 +95,8 @@ export function GraphCanvas({
   const [sizeTick, setSizeTick] = useState(0)
 
   const agentIds = useMemo(() => allAgents.map((a) => a.agentId), [allAgents])
+  const knownAgentIdsRef = useRef(knownAgentIds)
+  knownAgentIdsRef.current = knownAgentIds
   const agentPositions = useStableLayout(agentIds, AGENT_CENTER, AGENT_SPACING)
   const toolPositions = useStableLayout(toolNames, TOOL_CENTER, TOOL_SPACING)
   const bounds = useWorldBounds([agentPositions, toolPositions], 90)
@@ -167,7 +180,7 @@ export function GraphCanvas({
       const rect = canvas!.getBoundingClientRect()
       const world = camera.screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
       const visibleIds = agentsRef.current
-        .filter((a) => historyModeRef.current || !computeFade(a, Date.now()).removed)
+        .filter((a) => historyModeRef.current || !computeFade(a, Date.now(), knownAgentIdsRef.current).removed)
         .map((a) => a.agentId)
       const hit = hitTestAgent(world, agentPositionsRef.current, visibleIds)
       if (hit) onSelectAgent(hit)
@@ -223,7 +236,10 @@ export function GraphCanvas({
         // History mode (issue #43): a reconstructed snapshot is already
         // "as of" the scrubbed instant, so every agent in it renders at
         // full opacity — no live fade-out timer applies.
-        alphaByAgent.set(agent.agentId, historyModeRef.current ? 1 : computeFade(agent, nowMs).alpha)
+        alphaByAgent.set(
+          agent.agentId,
+          historyModeRef.current ? 1 : computeFade(agent, nowMs, knownAgentIdsRef.current).alpha,
+        )
       }
 
       updateEdgeAnimStates(edgeAnimStatesRef.current, edgeList, perfNow)
@@ -277,8 +293,8 @@ export function GraphCanvas({
   // keyboard/screen reader now that the graph itself is a flat canvas with
   // no individually-focusable DOM nodes.
   const visibleAgents = useMemo(
-    () => allAgents.filter((a) => historyMode || !computeFade(a, Date.now()).removed),
-    [allAgents, historyMode],
+    () => allAgents.filter((a) => historyMode || !computeFade(a, Date.now(), knownAgentIds).removed),
+    [allAgents, historyMode, knownAgentIds],
   )
 
   return (

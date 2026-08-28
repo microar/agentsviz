@@ -14,11 +14,19 @@
  * calls every frame to get a continuously-updated alpha (canvas alpha
  * instead of a CSS `transition: opacity`), driven by the same `FADE_MS`
  * window and the same `stoppedAt` anchor so the two stay in lockstep.
+ *
+ * Sub-agents (issue #49, see `isSubAgent` in fade.ts) are exempt from
+ * fade-out entirely — no timer is ever scheduled for one, and any pending
+ * removal is cancelled if an agent turns out to be a sub-agent. `agents`
+ * doubles as the source of "every agentId known this session" for that
+ * check, since the store never removes an agent entry once seen (see
+ * `store.tsx`), so the full history is always present in the list this
+ * hook is called with.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import type { AgentState } from '../types'
-import { FADE_MS } from './fade'
+import { FADE_MS, isSubAgent } from './fade'
 
 export function useGraphFadeOut(agents: AgentState[]): {
   isRemoved: (agentId: string) => boolean
@@ -29,10 +37,24 @@ export function useGraphFadeOut(agents: AgentState[]): {
   useEffect(() => {
     const timers = timersRef.current
     const now = Date.now()
+    const knownAgentIds = new Set(agents.map((a) => a.agentId))
 
     for (const agent of agents) {
       const id = agent.agentId
-      if (agent.status === 'stopped') {
+      if (isSubAgent(agent, knownAgentIds)) {
+        // Permanently visible — cancel any pending/completed removal.
+        const timer = timers.get(id)
+        if (timer) {
+          clearTimeout(timer)
+          timers.delete(id)
+        }
+        setRemovedIds((prev) => {
+          if (!prev.has(id)) return prev
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+      } else if (agent.status === 'stopped') {
         if (timers.has(id)) continue // fade already scheduled for this stop
 
         const stoppedAtMs = agent.stoppedAt ? Date.parse(agent.stoppedAt) : now
