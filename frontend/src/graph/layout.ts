@@ -64,9 +64,31 @@ export function useStableLayout(ids: string[], center: Point, spacing: number): 
   }, [ids.join('|'), center.x, center.y, spacing])
 }
 
-export const AGENT_CENTER: Point = { x: 260, y: 300 }
-export const TOOL_CENTER: Point = { x: 660, y: 300 }
-export const AGENT_SPACING = 30
+// Issue #45: for a phyllotaxis spiral (radius = spacing * sqrt(i), golden
+// angle between consecutive indices), the minimum pairwise distance between
+// *any* two points in the whole spiral — not just adjacent indices, the
+// spiral can bring non-adjacent indices close together at certain
+// angles/radii too — is exactly `spacing` itself (the index-0-to-index-1
+// gap), for any node count. So "no two same-cluster nodes overlap" reduces
+// to a single invariant: `spacing` must exceed the sum of the two nodes'
+// radii (`2 * radius` for equal-sized nodes). Verified empirically in
+// `frontend/scripts/verify-layout.mjs` (pairwise distance check across
+// indices 0..50) rather than trusted on the math alone.
+//
+// AGENT_SPACING=30 with AGENT_RADIUS=20 (diameter 40) violated this — nodes
+// 30px apart center-to-center with a 20px radius each overlap. 48 keeps an
+// 8px gap between agent node edges. TOOL_SPACING=46 against a tool node's
+// ~15.6px bounding-circle radius (half of TOOL_SIZE=22, times sqrt(2) for
+// the square's diagonal) already cleared this bar with room to spare, so it
+// is unchanged.
+//
+// AGENT_CENTER/TOOL_CENTER are also spaced far enough apart that the two
+// clusters' bounding circles don't reach each other up to ~50 concurrent
+// nodes per cluster (also checked by verify-layout.mjs) — a "realistic/high"
+// concurrent-agent count for a live multi-agent dashboard.
+export const AGENT_CENTER: Point = { x: 300, y: 320 }
+export const TOOL_CENTER: Point = { x: 1050, y: 320 }
+export const AGENT_SPACING = 48
 export const TOOL_SPACING = 46
 export const AGENT_RADIUS = 20
 export const TOOL_SIZE = 22
