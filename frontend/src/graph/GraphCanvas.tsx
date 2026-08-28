@@ -103,14 +103,26 @@ export function GraphCanvas({
 
   const edgeAnimStatesRef = useRef<Map<string, EdgeAnimState>>(new Map())
 
-  // Keep the camera auto-fitted to the graph's current bounds — recomputed
-  // whenever the node set changes (new agent/tool joins) or the wrapper is
-  // resized — right up until the user's first manual pan/zoom/pinch, at
-  // which point it stops for good so it never fights the user's own
-  // framing. Re-running on every bounds/size change (rather than only
-  // once) matters because the very first layout pass can hand us a 0×0 or
-  // not-yet-final wrapper size before CSS flex layout has settled.
+  // Fit the camera to the graph's content bounds exactly once — on initial
+  // mount, not on every subsequent node-set change (issue #45: a live
+  // dashboard whose camera silently re-fits/re-zooms every time an agent or
+  // tool call shows up is disorienting; new nodes appearing off the
+  // currently-framed view is an acceptable tradeoff, the user can pan to
+  // find them). `hasFittedRef` latches true the first time a fit actually
+  // happens and the effect becomes a no-op forever after, so it never
+  // fights the user's own framing again — same as the `hasEverInteracted()`
+  // guard below, kept for the case where the user pans/zooms before a fit
+  // ever manages to happen.
+  //
+  // The effect still needs to *retry* on every bounds/size change up until
+  // that first successful fit, though — that's not re-fitting, it's
+  // "become able to fit at all": the very first layout pass can hand us a
+  // 0×0 or not-yet-final wrapper size before CSS flex layout has settled,
+  // or an empty content-bounds before the first node exists (originally
+  // fixed in #40/#42).
+  const hasFittedRef = useRef(false)
   useEffect(() => {
+    if (hasFittedRef.current) return
     const canvas = canvasRef.current
     const wrapper = wrapperRef.current
     if (!canvas || !wrapper) return
@@ -131,6 +143,7 @@ export function GraphCanvas({
       x: cssWidth / 2 - centerX * scale,
       y: cssHeight / 2 - centerY * scale,
     })
+    hasFittedRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bounds, sizeTick])
 

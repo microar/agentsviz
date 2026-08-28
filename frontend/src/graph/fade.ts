@@ -1,6 +1,10 @@
 /**
  * Fade-out-and-remove timing for stopped agents (issue #39), reimplemented
- * for the canvas render loop (issue #40).
+ * for the canvas render loop (issue #40), then shortened to near-instant
+ * removal per issue #45 — the original 5s window kept stale/stopped agents
+ * cluttering a "live" view for longer than the dashboard's goal justifies.
+ * `FADE_MS` is now just long enough (a couple hundred ms) to avoid a jarring
+ * pop when a node disappears, not a real "linger" window.
  *
  * The original DOM implementation (`useGraphFadeOut` in the pre-#40
  * Graph.tsx) scheduled a `setTimeout` per agent and drove a CSS
@@ -10,18 +14,22 @@
  * to 0 over `FADE_MS`, anchored to `stoppedAt` — not to whenever this
  * function first happened to run — so an agent that was already stopped
  * before the tab loaded (e.g. present in the initial snapshot) still
- * disappears ~5s after it *actually* stopped, and one mid-fade when the tab
- * is switched back to Graph resumes exactly where the clock says it should
- * be, not from a fresh 5s.
+ * disappears ~`FADE_MS` after it *actually* stopped, and one mid-fade when
+ * the tab is switched back to Graph resumes exactly where the clock says it
+ * should be, not from a fresh window.
  *
  * A running agent (including one that goes back to running after a
  * presumed/explicit stop — a reconnect/resume, handled defensively as in
  * the original hook) is always fully opaque and never removed.
+ *
+ * History mode (issue #43) bypasses this entirely — see `GraphCanvas.tsx`'s
+ * `historyMode` prop, which renders every agent in a reconstructed snapshot
+ * at full opacity regardless of `computeFade`'s result.
  */
 
 import type { AgentState } from '../types'
 
-export const FADE_MS = 5000
+export const FADE_MS = 250
 
 export interface FadeState {
   /** 1 = fully visible, 0 = fully faded. */

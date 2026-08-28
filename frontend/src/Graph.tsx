@@ -50,12 +50,14 @@ export function GraphTab() {
 
   const liveAllAgents = useMemo(() => Object.values(agents), [agents])
   // The Graph tab is a *live* view: it defaults to showing only active
-  // agents, fading a just-stopped one out over ~5s rather than letting
-  // every agent that's ever run accumulate on screen forever (issue #39).
-  // Logs/Teams are unaffected — they still read straight from `agents`.
-  // The fade timer only makes sense in live mode: a historical snapshot is
-  // already "as of" the scrubbed instant, so history mode shows every
-  // agent in it at full opacity instead (see GraphCanvas's `historyMode`).
+  // agents, removing a just-stopped one promptly (a brief, barely
+  // perceptible fade — see FADE_MS in graph/fade.ts, shortened from the
+  // original 5s per issue #45) rather than letting every agent that's ever
+  // run accumulate on screen forever (issue #39). Logs/Teams are
+  // unaffected — they still read straight from `agents`. The fade timer
+  // only makes sense in live mode: a historical snapshot is already "as
+  // of" the scrubbed instant, so history mode shows every agent in it at
+  // full opacity instead (see GraphCanvas's `historyMode`).
   const { isRemoved } = useGraphFadeOut(liveAllAgents)
 
   const allAgents = isHistory && historicalSnapshot ? Object.values(historicalSnapshot.agents) : liveAllAgents
@@ -114,7 +116,7 @@ export function GraphTab() {
         <p className="empty-state">
           {isHistory
             ? 'No agents were active at this point in time.'
-            : 'No active agents right now — stopped agents fade out of this view within 5s. Scrub back on the timeline above to see past activity.'}
+            : 'No active agents right now — stopped agents are removed from this view promptly. Scrub back on the timeline above to see past activity.'}
         </p>
       ) : (
         <>
