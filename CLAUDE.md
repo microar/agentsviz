@@ -82,7 +82,9 @@ Per package (run inside the package dir, or with `--prefix <pkg>`):
   under `concurrently`.
 - Server env vars: `PORT`, `AGENTSVIZ_DB_PATH` (SQLite event store,
   default `server/data/agentsviz.db`; `:memory:` for ephemeral),
-  `EVENT_LOG_PATH`, `AGENT_STALE_TIMEOUT_MS`,
+  `EVENT_LOG_PATH`, `EVENT_LOG_RETENTION_COUNT` (default `10`) /
+  `EVENT_LOG_RETENTION_DAYS` (unset) — startup pruning of old
+  `events-*.jsonl` logs, `AGENT_STALE_TIMEOUT_MS`,
   `AGENT_STALE_CHECK_INTERVAL_MS`, `JSON_BODY_LIMIT` (default `5mb` — tool
   results can be large). Frontend: `VITE_WS_URL` overrides the
   `ws://<host>:4000/ws` default.

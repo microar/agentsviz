@@ -28,6 +28,8 @@ to port `4000`).
 | `AGENTSVIZ_API_KEYS` | `dev-local-token` (built-in dev token) | Comma-separated allow-list of bearer tokens accepted on `POST /events`, `GET /events/history`, and the `/ws` handshake (see "Authentication" below). `AGENTSVIZ_API_KEY` (singular) is also accepted. |
 | `AGENTSVIZ_DB_PATH` | `server/data/agentsviz.db`             | Path to the persistent SQLite event store (see "Persistent event store" below). Use `:memory:` for an ephemeral DB. |
 | `EVENT_LOG_PATH`| `server/data/events-<start-timestamp>.jsonl` | Path to the JSONL event log file (see "Event log" below). |
+| `EVENT_LOG_RETENTION_COUNT` | `10`                          | Keep only the N newest auto-rotated `events-*.jsonl` files on startup (the active file counts as one). `0` disables the count limit. See "Retention" below. |
+| `EVENT_LOG_RETENTION_DAYS` | *(unset)*                      | Also delete auto-rotated `events-*.jsonl` files older than N days on startup. Unset (or `0`) disables the age limit. |
 | `AGENT_STALE_TIMEOUT_MS` | `300000` (5 min)                  | How long an agent can go without any event before it's presumed dead and marked `stopped` (see "Stale agent reaping" below). |
 | `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)              | How often the stale-agent sweep runs. |
 | `JSON_BODY_LIMIT` | `5mb`                                   | Max size of a `POST /events` JSON body; larger requests get a clean `413`. |
@@ -242,8 +244,27 @@ object per line, in acceptance order.
   reclaim disk space, just delete everything under `server/data/`; the
   directory is gitignored (along with any `*.jsonl` file, in case
   `EVENT_LOG_PATH` points elsewhere in the repo), so no event data is
-  ever committed. This is intentionally simple — no size-based rotation
-  or log retention policy.
+  ever committed.
+- **Retention**: a fresh file per restart still accumulates without
+  bound on a frequently-restarted server. On startup (before the new
+  run's file is created) the server prunes old auto-rotated
+  `events-*.jsonl` files in the active log's directory, keeping a
+  bounded window:
+  - `EVENT_LOG_RETENTION_COUNT` (default `10`) — keep only the N newest
+    log files; the currently-active file counts as one of the N. `0`
+    disables this limit.
+  - `EVENT_LOG_RETENTION_DAYS` (default unset) — also delete anything
+    whose mtime is older than N days. Unset or `0` disables this limit.
+
+  Both are applied when set: a file is pruned if it falls outside
+  *either* window (whichever removes more). With both disabled, nothing
+  is pruned. The currently-active log file is never deleted, and only
+  files matching the `events-*.jsonl` name pattern are ever
+  considered — an explicitly-configured `EVENT_LOG_PATH`, the SQLite
+  `.db`, and any other files are left alone. Pruning is best-effort:
+  failures are logged with `console.warn` and never block startup. When
+  anything is removed, a one-line summary (count + bytes freed) is
+  printed at startup. This is startup-only — there's no background timer.
 
 ## Notes
 

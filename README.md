@@ -194,6 +194,8 @@ for those, use `instrumentation/` instead.
 | `server`          | `PORT`                       | `4000`                                        | Port the HTTP + WebSocket server listens on. |
 | `server`          | `AGENTSVIZ_DB_PATH`         | `server/data/agentsviz.db`                    | Path to the persistent SQLite event store (or `:memory:`). State is rebuilt from it on startup. |
 | `server`          | `EVENT_LOG_PATH`             | `server/data/events-<start-timestamp>.jsonl`  | Path to the JSONL event log file. |
+| `server`          | `EVENT_LOG_RETENTION_COUNT`  | `10`                                          | On startup, keep only the N newest auto-rotated `events-*.jsonl` files (active file counts as one; `0` disables). See server README's "Event log". |
+| `server`          | `EVENT_LOG_RETENTION_DAYS`   | *(unset)*                                     | On startup, also delete auto-rotated `events-*.jsonl` files older than N days (unset/`0` disables). |
 | `server`          | `AGENT_STALE_TIMEOUT_MS`     | `300000` (5 min)                              | How long an agent can go without any event before the server presumes it dead and marks it `stopped` (`inferred: true`) — see "Stale agents" below. |
 | `server`          | `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)                              | How often the server sweeps for stale agents. |
 | `server`          | `JSON_BODY_LIMIT`            | `5mb`                                         | Max size of a POST `/events` JSON body. Requests over this get a clean `413`. |
