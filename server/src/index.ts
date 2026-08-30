@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import express, { type Request, type Response } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { validateEvent, type AgentEvent } from "./eventSchema.js";
-import { logEvent, getLogFilePath } from "./eventLogger.js";
+import { logEvent, getLogFilePath, pruneEventLogs } from "./eventLogger.js";
 import { EventRepository } from "./eventRepository.js";
 import { requestLogger } from "./logger.js";
 import { StateStore } from "./store.js";
@@ -108,6 +108,20 @@ if (eventRepository.enabled) {
   if (persisted.length > 0) {
     console.log(`Restored ${persisted.length} persisted event(s) into the in-memory store`);
   }
+}
+
+// Prune old auto-rotated JSONL event logs before this run's file is
+// created (issue #53). Startup-only, matching the "fresh file per restart"
+// rotation model — without it a frequently-restarted server accumulates
+// `data/events-*.jsonl` forever. Bounded by EVENT_LOG_RETENTION_COUNT /
+// EVENT_LOG_RETENTION_DAYS; the SQLite store is untouched. Best-effort:
+// pruneEventLogs swallows its own errors, so this never blocks startup.
+const pruned = pruneEventLogs();
+if (pruned.pruned.length > 0) {
+  const freedKiB = (pruned.freedBytes / 1024).toFixed(1);
+  console.log(
+    `Event log retention: pruned ${pruned.pruned.length} old log file(s), freed ${freedKiB} KiB`,
+  );
 }
 
 /** Broadcast an accepted event, as JSON, to every currently-connected WS client. */
