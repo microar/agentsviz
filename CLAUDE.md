@@ -84,8 +84,16 @@ Per package (run inside the package dir, or with `--prefix <pkg>`):
   default `server/data/agentsviz.db`; `:memory:` for ephemeral),
   `EVENT_LOG_PATH`, `AGENT_STALE_TIMEOUT_MS`,
   `AGENT_STALE_CHECK_INTERVAL_MS`, `JSON_BODY_LIMIT` (default `5mb` — tool
-  results can be large). Frontend: `VITE_WS_URL` overrides the
-  `ws://<host>:4000/ws` default.
+  results can be large), `AGENTSVIZ_API_KEYS` (bearer-token allow-list),
+  `AGENTSVIZ_REDACTION` / `AGENTSVIZ_REDACT_FIELDS` /
+  `AGENTSVIZ_REDACT_PATTERNS` (best-effort PII/secret redaction of
+  `input`/`result`/`message` in `POST /events`, on by default — see
+  `server/src/redact.ts` and `SECURITY.md`). Frontend: `VITE_WS_URL`
+  overrides the `ws://<host>:4000/ws` default.
 - CORS is intentionally permissive (`*`) — local dev dashboard, no auth.
+- `POST /events` pipeline: validate → `redactEvent` (redact.ts) →
+  `store.applyEvent` → `broadcast` → `eventRepository.append` +
+  `logEvent`. Redaction is centralized here so every sink sees the same
+  scrubbed copy.
 - `frontend` uses TypeScript `~6.0.2`; `server` uses `~5.7.2`. Don't
   "align" them without reason.

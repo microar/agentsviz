@@ -197,6 +197,9 @@ for those, use `instrumentation/` instead.
 | `server`          | `AGENT_STALE_TIMEOUT_MS`     | `300000` (5 min)                              | How long an agent can go without any event before the server presumes it dead and marks it `stopped` (`inferred: true`) — see "Stale agents" below. |
 | `server`          | `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)                              | How often the server sweeps for stale agents. |
 | `server`          | `JSON_BODY_LIMIT`            | `5mb`                                         | Max size of a POST `/events` JSON body. Requests over this get a clean `413`. |
+| `server`          | `AGENTSVIZ_REDACTION`       | `on`                                          | Best-effort PII/secret redaction of `input`/`result`/`message` before storage/broadcast — see [`SECURITY.md`](SECURITY.md). Set `off`/`0`/`false`/`no` to disable. |
+| `server`          | `AGENTSVIZ_REDACT_FIELDS`   | *(none)*                                      | Extra comma-separated field names to always redact (added to the built-in denylist). |
+| `server`          | `AGENTSVIZ_REDACT_PATTERNS` | *(none)*                                      | Extra comma-separated regex sources to redact when matched in a string value. |
 | `server`          | `AGENTSVIZ_API_KEYS`        | `dev-local-token` (built-in dev token)        | Comma-separated allow-list of bearer tokens for `POST /events`, `GET /events/history`, and the `/ws` handshake — see "Authentication" below. |
 | `frontend`        | `VITE_WS_URL`                | derived from `window.location` + port `4000`  | WebSocket URL the frontend connects to. Set this if the server isn't on the same host or the default port. |
 | `frontend`        | `VITE_AGENTSVIZ_TOKEN`      | `dev-local-token`                             | Build-time viewer token sent on the `/ws` handshake and `/events/history` fetch — see "Authentication" below. |
@@ -227,6 +230,23 @@ frontend all default to — so `npm run dev` works out of the box with no
 configuration. For anything beyond local use, set `AGENTSVIZ_API_KEYS` on
 the server and the matching per-package token var above. v1 is a single
 shared allow-list — no per-team/per-project keys yet.
+
+## Redaction (PII / secrets)
+
+The server scrubs likely-sensitive data out of every accepted event's
+`input`, `result`, and `message` fields — in `POST /events`, before the
+event is stored, broadcast, logged, or persisted — using a
+case-insensitive field-name denylist (`password`, `apiKey`, `token`,
+`ssn`, …) plus regexes for common secret/token/PII shapes (`sk-…` keys,
+`Bearer` values, AWS/GitHub/Slack/Google keys, JWTs, PEM private keys,
+emails, card-like numbers). It is **on by default**; disable or extend it
+with `AGENTSVIZ_REDACTION` / `AGENTSVIZ_REDACT_FIELDS` /
+`AGENTSVIZ_REDACT_PATTERNS` (see the env-var table above).
+
+This is **best-effort pattern matching, not a compliance guarantee** —
+novel key shapes, split secrets, and sensitive prose pass through. See
+[`SECURITY.md`](SECURITY.md) and
+[`docs/event-schema.md`](docs/event-schema.md)'s "Redaction" section.
 
 ## Stale agents (no `agent_stop` received)
 

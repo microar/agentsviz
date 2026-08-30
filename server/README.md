@@ -31,6 +31,9 @@ to port `4000`).
 | `AGENT_STALE_TIMEOUT_MS` | `300000` (5 min)                  | How long an agent can go without any event before it's presumed dead and marked `stopped` (see "Stale agent reaping" below). |
 | `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)              | How often the stale-agent sweep runs. |
 | `JSON_BODY_LIMIT` | `5mb`                                   | Max size of a `POST /events` JSON body; larger requests get a clean `413`. |
+| `AGENTSVIZ_REDACTION` | `on`                                | Best-effort PII/secret redaction of `input`/`result`/`message` before storage/broadcast (see "Redaction" below). `off`/`0`/`false`/`no` disables it. |
+| `AGENTSVIZ_REDACT_FIELDS` | *(none)*                        | Extra comma-separated field names to always redact (added to the built-in denylist). |
+| `AGENTSVIZ_REDACT_PATTERNS` | *(none)*                      | Extra comma-separated regex sources to redact when matched in a string value (added to the built-in pattern list). |
 
 ## Authentication
 
@@ -174,6 +177,36 @@ event, so open dashboards update live without a page refresh. See
 `server/test/store.test.ts` for the behavior this guarantees (and
 `integration/stale-agent-e2e-test.mjs` for the end-to-end version against
 a real running server).
+
+## Redaction (best-effort PII/secret scrubbing)
+
+Every accepted event passes through a redaction step in `POST /events`
+**after validation and before it reaches any consumer** — the in-memory
+`StateStore`, the WebSocket broadcast, the JSONL log, and the SQLite
+store all see the same scrubbed copy (issue #54). Centralising it here
+means no emitter or sink has to remember to do it.
+
+- **Scope**: only `tool_call_start.input`, `tool_call_end.result`, and
+  `message`, recursing through nested objects/arrays. All other envelope
+  fields (`agentId`, `caller`, `team`, `tool`, `timestamp`, …) are left
+  alone.
+- **Field-name denylist** (case-insensitive): keys like `password`,
+  `apiKey`, `token`, `secret`, `authorization`, `ssn`, `credit_card`,
+  `cvv` (full list in `src/redact.ts`) have their **entire** value
+  replaced with `[REDACTED]`, whatever its shape. Extend with
+  `AGENTSVIZ_REDACT_FIELDS`.
+- **Value patterns**: string leaves are matched against regexes for
+  common secret/token/PII shapes — `sk-…` keys, `Bearer`/`Basic` values,
+  AWS/GitHub/Slack/Google key formats, JWTs, PEM private keys, emails,
+  card-like digit groups — and each match becomes `[REDACTED]`. Extend
+  with `AGENTSVIZ_REDACT_PATTERNS`.
+- **Config**: `AGENTSVIZ_REDACTION=off` disables the pass entirely
+  (default on — safe-by-default). Regexes and the denylist are compiled
+  once at startup, so the `/events` hot path just walks the payload.
+- **Best-effort, not a guarantee**: pattern matching misses novel key
+  shapes, split secrets, encoded blobs, and sensitive prose. See
+  [`/SECURITY.md`](../SECURITY.md) and `docs/event-schema.md`'s
+  "Redaction" section. Unit tests: `test/redact.test.ts`.
 
 ## Persistent event store
 

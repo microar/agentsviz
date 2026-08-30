@@ -7,6 +7,7 @@ import { logEvent, getLogFilePath } from "./eventLogger.js";
 import { EventRepository } from "./eventRepository.js";
 import { requestLogger } from "./logger.js";
 import { StateStore } from "./store.js";
+import { loadRedactionConfig, redactEvent } from "./redact.js";
 import {
   DEV_FALLBACK_TOKEN,
   getAllowedTokens,
@@ -38,6 +39,12 @@ const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "5mb";
 // all check an incoming token against this list. Defaults to the built-in
 // dev token when no env var is set — see auth.ts.
 const ALLOWED_TOKENS = getAllowedTokens();
+// Best-effort PII/secret redaction for `input`/`result`/`message` (issue
+// #54). Resolved once here so the regexes compile a single time; the
+// `/events` handler then just walks the payload. Default: on. Disable
+// with AGENTSVIZ_REDACTION=off; extend via AGENTSVIZ_REDACT_FIELDS /
+// AGENTSVIZ_REDACT_PATTERNS. See redact.ts.
+const REDACTION_CONFIG = loadRedactionConfig();
 
 app.use(requestLogger);
 // Permissive CORS: this is a local/internal dev dashboard, and the
@@ -132,7 +139,13 @@ app.post("/events", (req: Request, res: Response) => {
     return;
   }
 
-  const event = req.body as AgentEvent;
+  // Scrub likely PII/secrets out of `input`/`result`/`message` before the
+  // event reaches ANY consumer — the in-memory store, live WS viewers, the
+  // JSONL log, and the persistent DB all see the redacted copy, so
+  // redaction is consistent and can't be forgotten per-sink. Pure and
+  // fast: returns the original reference untouched when nothing matched or
+  // redaction is disabled (AGENTSVIZ_REDACTION=off). See redact.ts.
+  const event = redactEvent(req.body as AgentEvent, REDACTION_CONFIG);
   store.applyEvent(event);
   broadcast(event);
   // Fire-and-forget persistence — neither is awaited, and both swallow their
