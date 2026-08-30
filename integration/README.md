@@ -1,4 +1,4 @@
-# Integration tests (issues #10, #32, #37)
+# Integration tests (issues #10, #32, #37, #51)
 
 End-to-end integration tests that exercise the real pieces built for
 issues #3, #4, #6, #29, and #37 together: the **instrumentation helper**
@@ -9,7 +9,7 @@ state store (`server/`), and the schema they all speak
 
 There are two independent producers of the same event schema, and two
 matching test files, plus a third test for the server's own stale-agent
-liveness sweep:
+liveness sweep and a fourth for its persistent storage backend:
 
 - `e2e-test.mjs` (issue #10) — the `instrumentation/` library, called
   directly the way a real agent's own code would call it.
@@ -30,8 +30,18 @@ liveness sweep:
   one is never falsely reaped. `server/test/store.test.ts` covers the
   same logic as a fast, deterministic unit test against the store
   directly.
+- `persistence-e2e-test.mjs` (issue #51) — proves the SQLite storage
+  backend (`server/src/eventRepository.ts`) survives a real restart:
+  POSTs a small multi-agent run to one server process, kills it, starts a
+  fresh process against the same `AGENTSVIZ_DB_PATH`, and asserts the new
+  process rebuilds the exact agent/tool-call/team state (and serves the
+  raw events on `/events/history`) with nothing replayed over the wire.
+  Also checks that live ingestion still works and that an unwritable DB
+  path degrades to in-memory-only instead of crashing.
+  `server/test/eventRepository.test.ts` covers the repository as a fast,
+  deterministic unit test.
 
-All three start a real, unmodified event server and assert against its
+All four start a real, unmodified event server and assert against its
 real WebSocket broadcast stream and state snapshot — no mocks, no stubs.
 
 ## What it does
@@ -141,10 +151,11 @@ exactly the way Claude Code's own harness drives a hook:
 
 ```bash
 cd integration
-npm test                  # all three: instrumentation (#10) + hooks-emitter (#32) + stale-agent (#37)
+npm test                  # all four: instrumentation (#10) + hooks-emitter (#32) + stale-agent (#37) + persistence (#51)
 npm run test:e2e           # instrumentation library only
 npm run test:hooks-emitter # hooks-emitter script only
 npm run test:stale-agent   # server-side stale-agent liveness sweep only
+npm run test:persistence   # server-side SQLite storage backend / restart recovery only
 ```
 
 Each script installs/builds its own producer package (`instrumentation`
@@ -189,21 +200,26 @@ criteria but have real, deliberate limitations:
   at high volume — see the "Open questions" section of
   `/docs/event-schema.md` about a shared tool-call `callId`, which
   matters more once concurrent same-tool calls are common.
-- **Single process, single server instance.** No coverage of server
-  restarts mid-run, multiple server replicas, or network partition
-  between an agent and the server (the instrumentation helper's
-  fire-and-forget/timeout behavior for an unreachable server is instead
-  covered by `instrumentation/smoke-test.mjs`).
+- **Single process, single server instance.** `e2e-test.mjs` /
+  `hooks-emitter-e2e-test.mjs` don't cover server restarts mid-run,
+  multiple server replicas, or a network partition between an agent and
+  the server (the instrumentation helper's fire-and-forget/timeout
+  behavior for an unreachable server is instead covered by
+  `instrumentation/smoke-test.mjs`). `persistence-e2e-test.mjs` does
+  cover a clean kill-and-restart against a shared SQLite DB, but not a
+  restart *mid-request* or concurrent replicas sharing one DB file.
 - **Frontend is not driven end-to-end.** This test verifies the server's
   state store and broadcast stream — the same snapshot/event data the
   frontend's WebSocket client (`frontend/src/store.tsx`) consumes — but
   does not render the React app or assert against the DOM. The frontend
   store's mapping from these exact message shapes to UI state is
   unexercised here.
-- **No persistence.** Consistent with `server/src/store.ts` itself, this
-  test only checks in-memory state during the life of one server
-  process; it doesn't test recovery/replay after a restart (the server
-  has none — see `server/README.md`).
+- **Persistence coverage is restart-only.** `persistence-e2e-test.mjs`
+  proves state and event history survive a full stop/start against a
+  shared SQLite file, but doesn't exercise DB corruption recovery, WAL
+  checkpoint edge cases, schema migration from a real older-version DB,
+  or a Postgres backend (only the `node:sqlite` one exists today). The
+  other three tests still only check in-memory state within one process.
 - **Synthetic hook payloads, not a real Claude Code harness.**
   `hooks-emitter-e2e-test.mjs` hand-authors realistic hook JSON based on
   the [documented hook schema](https://code.claude.com/docs/en/hooks)

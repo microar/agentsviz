@@ -4,6 +4,7 @@ import express, { type Request, type Response } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { validateEvent, type AgentEvent } from "./eventSchema.js";
 import { logEvent, getLogFilePath } from "./eventLogger.js";
+import { EventRepository } from "./eventRepository.js";
 import { requestLogger } from "./logger.js";
 import { StateStore } from "./store.js";
 import {
@@ -84,6 +85,31 @@ const wss = new WebSocketServer({
 });
 const store = new StateStore();
 
+// Durable event storage (see eventRepository.ts). Every accepted event is
+// appended here in addition to the in-memory StateStore and the JSONL log,
+// so a restart/crash/deploy doesn't lose observability data. If the SQLite
+// backend can't be opened it degrades to a no-op (`enabled === false`) and
+// the server runs exactly as before — persistence never blocks ingestion.
+const eventRepository = new EventRepository();
+
+// Rebuild the in-memory view from persisted events on startup, so the
+// dashboard shows prior agent/tool-call/team state instead of resetting to
+// empty. StateStore.applyEvent is unchanged — we just feed it the recorded
+// stream (oldest first) exactly as if it had just arrived over the wire.
+if (eventRepository.enabled) {
+  const persisted = eventRepository.readAll();
+  for (const event of persisted) {
+    try {
+      store.applyEvent(event as AgentEvent);
+    } catch (err) {
+      console.warn("Skipped an unreplayable persisted event:", err);
+    }
+  }
+  if (persisted.length > 0) {
+    console.log(`Restored ${persisted.length} persisted event(s) into the in-memory store`);
+  }
+}
+
 /** Broadcast an accepted event, as JSON, to every currently-connected WS client. */
 function broadcast(event: unknown): void {
   const payload = JSON.stringify(event);
@@ -109,29 +135,39 @@ app.post("/events", (req: Request, res: Response) => {
   const event = req.body as AgentEvent;
   store.applyEvent(event);
   broadcast(event);
-  // Fire-and-forget JSONL append (see eventLogger.ts) — not awaited, so it
-  // cannot delay the broadcast above or this response.
+  // Fire-and-forget persistence — neither is awaited, and both swallow their
+  // own failures (see eventRepository.ts / eventLogger.ts), so they cannot
+  // delay the broadcast above or this response, nor break ingestion if the
+  // disk / DB is unavailable.
+  eventRepository.append(event);
   logEvent(event);
   res.status(202).json({ status: "accepted" });
 });
 
-// Read-back of this run's recorded event stream (issue #43), for the
-// frontend's history/timeline scrubber to reconstruct past Graph state
-// from. Reads the same JSONL file `eventLogger.ts` is appending accepted
-// events to for this server process (see `getLogFilePath`) and returns it
-// as a JSON array of raw events, oldest first — the same shape/order the
+// Read-back of the recorded event stream (issue #43), for the frontend's
+// history/timeline scrubber to reconstruct past Graph state from. Returns
+// a JSON array of raw events, oldest first — the same shape/order the
 // events were originally POSTed to /events in.
+//
+// Source of truth is the persistent event store (eventRepository.ts) when
+// it's enabled, so history now spans every server run instead of just the
+// current process's JSONL file — a restart no longer truncates the
+// scrubber's timeline. When persistence is disabled we fall back to the
+// current run's JSONL file (`getLogFilePath`), preserving the pre-existing
+// single-session behaviour.
 //
 // Reconstruction itself (folding these events into agent/tool-call state
 // as of a given timestamp) happens client-side rather than here: the
 // frontend already carries its own small `applyEvent` reducer (mirroring
 // `StateStore.applyEvent`) to apply live WS events incrementally, and
-// reusing that same reducer for history avoids a network round-trip (and
-// re-parsing this whole file) on every scrub-drag frame. This route stays
-// a dumb, cheap file read. Multi-session history (past `events-*.jsonl`
-// files from earlier server runs) is explicitly out of scope — only the
-// active log file for the current process is read.
+// reusing that same reducer for history avoids a network round-trip on
+// every scrub-drag frame. This route stays a dumb, cheap read.
 app.get("/events/history", (_req: Request, res: Response) => {
+  if (eventRepository.enabled) {
+    res.status(200).json(eventRepository.readAll());
+    return;
+  }
+
   const logPath = getLogFilePath();
   if (!existsSync(logPath)) {
     // Nothing logged yet this run (no event has been accepted since
@@ -208,3 +244,20 @@ httpServer.listen(PORT, () => {
     );
   }
 });
+
+// Flush and close the SQLite handle cleanly on shutdown. Each append
+// already commits on its own (see eventRepository.ts), so this is just
+// tidiness — but it checkpoints the WAL so the .db file is self-contained
+// between runs.
+let shuttingDown = false;
+function shutdown(signal: NodeJS.Signals): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}, shutting down`);
+  eventRepository.close();
+  httpServer.close(() => process.exit(0));
+  // Don't hang forever on lingering connections (e.g. open WebSockets).
+  setTimeout(() => process.exit(0), 2000).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

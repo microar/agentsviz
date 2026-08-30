@@ -85,7 +85,9 @@ before(async () => {
   // multiple megabytes.
   serverProcess = spawn(TSX_BIN, ["src/index.ts"], {
     cwd: SERVER_DIR,
-    env: { ...process.env, PORT: String(port), JSON_BODY_LIMIT: "200kb" },
+    // Ephemeral DB so this test doesn't write to (or read stale state from)
+    // the default server/data/agentsviz.db.
+    env: { ...process.env, PORT: String(port), JSON_BODY_LIMIT: "200kb", AGENTSVIZ_DB_PATH: ":memory:" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   await waitForHealth(baseUrl);

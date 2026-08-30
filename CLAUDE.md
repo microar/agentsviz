@@ -21,9 +21,13 @@ Not an npm workspaces monorepo. Each package installs and builds
 independently; root `package.json` only provides `npm run dev`.
 
 - `server/` — Express + `ws`. `POST /events` (validate → `StateStore` →
-  broadcast), `GET /events/history` (replays this run's JSONL log),
-  `/health`, WS at `/ws` (sends full snapshot on connect). In-memory state
-  only, lost on restart. Accepted events appended to a local JSONL file.
+  broadcast → persist), `GET /events/history` (raw event replay),
+  `/health`, WS at `/ws` (sends full snapshot on connect). `StateStore` is
+  in-memory but rebuilt on startup by replaying the persistent event store
+  (`eventRepository.ts` — SQLite via `node:sqlite`, `AGENTSVIZ_DB_PATH`,
+  default `server/data/agentsviz.db`), so state survives restarts;
+  persistence is fire-and-forget and degrades to in-memory-only if the DB
+  can't be opened. Accepted events are also still appended to a JSONL file.
   Stale agents (no event for `AGENT_STALE_TIMEOUT_MS`, default 5min) get
   reaped and marked `stopped` with `inferred: true`.
 - `frontend/` — React 19 + Vite. Self-reconnecting WS client (`ws.ts`),
@@ -76,7 +80,9 @@ Per package (run inside the package dir, or with `--prefix <pkg>`):
 
 - `server` and `frontend` `dev` output is colored/labeled (blue / magenta)
   under `concurrently`.
-- Server env vars: `PORT`, `AGENT_STALE_TIMEOUT_MS`,
+- Server env vars: `PORT`, `AGENTSVIZ_DB_PATH` (SQLite event store,
+  default `server/data/agentsviz.db`; `:memory:` for ephemeral),
+  `EVENT_LOG_PATH`, `AGENT_STALE_TIMEOUT_MS`,
   `AGENT_STALE_CHECK_INTERVAL_MS`, `JSON_BODY_LIMIT` (default `5mb` — tool
   results can be large). Frontend: `VITE_WS_URL` overrides the
   `ws://<host>:4000/ws` default.
