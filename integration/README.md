@@ -165,6 +165,12 @@ own server on a free port, so both are safe to run alongside a `server`
 you already have running in dev mode elsewhere, and alongside each other.
 Every server child process is cleaned up on both success and failure.
 
+The spawned server sets no `AGENTSVIZ_API_KEYS`, so it accepts only the
+built-in dev token (`dev-local-token`, issue #52). The producer packages
+default to that same token, so their POSTs need no extra wiring; the
+tests' own raw `fetch`/`WebSocket` calls pass it explicitly (an
+`Authorization: Bearer` header, or `?token=` on the WS handshake URL).
+
 Exit code is `0` on success, `1` with a per-assertion failure list on
 any failure.
 

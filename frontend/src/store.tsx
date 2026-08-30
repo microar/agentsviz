@@ -36,7 +36,7 @@ import {
   useReducer,
   type ReactNode,
 } from 'react'
-import { connectWebSocket, defaultWsUrl, type ConnectionStatus } from './ws'
+import { connectWebSocket, defaultWsUrl, withToken, type ConnectionStatus } from './ws'
 import {
   isLifecycleEvent,
   isSnapshotMessage,
@@ -277,7 +277,9 @@ export function EventStoreProvider({ children, wsUrl }: EventStoreProviderProps)
   const [state, dispatch] = useReducer(reducer, initialState)
 
   useEffect(() => {
-    const url = wsUrl ?? defaultWsUrl()
+    // Authenticate the handshake (issue #52): the token rides on the URL
+    // as `?token=`, since browser WebSocket clients can't set headers.
+    const url = withToken(wsUrl ?? defaultWsUrl())
     const client = connectWebSocket(url, {
       onStatusChange: (status) => dispatch({ kind: 'status', status }),
       onMessage: (data) => {

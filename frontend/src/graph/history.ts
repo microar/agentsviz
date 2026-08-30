@@ -21,6 +21,7 @@
 
 import { applyEvent, initialState, type EventStoreState } from '../store'
 import { isLifecycleEvent, type LifecycleEvent } from '../types'
+import { viewerToken } from '../ws'
 
 /** Resolves the history endpoint URL, honoring VITE_HISTORY_URL like ws.ts's defaultWsUrl. */
 export function defaultHistoryUrl(): string {
@@ -35,7 +36,9 @@ export function defaultHistoryUrl(): string {
 /** Fetches the current run's recorded event stream. Returns `[]` on any failure. */
 export async function fetchEventHistory(url: string): Promise<LifecycleEvent[]> {
   try {
-    const res = await fetch(url)
+    // Same token as the WS handshake (issue #52) — a plain `fetch` can
+    // send the header, unlike a browser WebSocket.
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${viewerToken()}` } })
     if (!res.ok) return []
     const data: unknown = await res.json()
     if (!Array.isArray(data)) return []

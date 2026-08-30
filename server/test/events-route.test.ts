@@ -1,5 +1,6 @@
 /**
- * Route-level tests for POST /events' body-parser error handling (issue #46).
+ * Route-level tests for POST /events: body-parser error handling (issue
+ * #46) and token auth (issue #52).
  *
  * `body-parser`'s default JSON limit is 100kb, and prior to this fix an
  * oversized body threw an unhandled `PayloadTooLargeError` that fell through
@@ -68,6 +69,14 @@ const validEvent = {
   timestamp: "2026-01-01T00:00:00.000Z",
 };
 
+// No AGENTSVIZ_API_KEYS is set for the spawned server, so it accepts only
+// the built-in dev token (see src/auth.ts).
+const DEV_TOKEN = "dev-local-token";
+const authHeaders = {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${DEV_TOKEN}`,
+};
+
 before(async () => {
   const port = await findFreePort();
   baseUrl = `http://localhost:${port}`;
@@ -99,7 +108,7 @@ test("a body over the configured limit gets a clean 413 JSON error, not a raw st
   const oversizedResult = "x".repeat(300 * 1024); // 300kb of payload, over the 200kb test limit
   const res = await fetch(`${baseUrl}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders,
     body: JSON.stringify({
       type: "tool_call_end",
       agentId: "a1",
@@ -116,10 +125,10 @@ test("a body over the configured limit gets a clean 413 JSON error, not a raw st
   assert.ok(Array.isArray(body.details), "details should be an array");
 });
 
-test("a malformed-JSON body still gets the existing clean 400 (unaffected by this change)", async () => {
+test("a malformed-JSON body (with a valid token) still gets the existing clean 400", async () => {
   const res = await fetch(`${baseUrl}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders,
     body: "{not valid json",
   });
 
@@ -128,14 +137,51 @@ test("a malformed-JSON body still gets the existing clean 400 (unaffected by thi
   assert.equal(body.error, "Invalid event");
 });
 
-test("a normal, under-limit valid event is still accepted (202)", async () => {
+test("a normal, under-limit valid event (with a valid token) is still accepted (202)", async () => {
   const res = await fetch(`${baseUrl}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders,
     body: JSON.stringify(validEvent),
   });
 
   assert.equal(res.status, 202, `expected 202, got ${res.status}`);
   const body = await res.json();
   assert.equal(body.status, "accepted");
+});
+
+test("POST /events with no token gets a clean 401, not a 202 (issue #52)", async () => {
+  const res = await fetch(`${baseUrl}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(validEvent),
+  });
+
+  assert.equal(res.status, 401, `expected 401, got ${res.status}`);
+  const body = await res.json();
+  assert.equal(body.error, "Unauthorized");
+  assert.ok(Array.isArray(body.details), "details should be an array");
+});
+
+test("POST /events with an unknown token gets a clean 401 (issue #52)", async () => {
+  const res = await fetch(`${baseUrl}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer nope-not-valid" },
+    body: JSON.stringify(validEvent),
+  });
+
+  assert.equal(res.status, 401, `expected 401, got ${res.status}`);
+  const body = await res.json();
+  assert.equal(body.error, "Unauthorized");
+});
+
+test("GET /events/history requires a token too (issue #52)", async () => {
+  const unauthed = await fetch(`${baseUrl}/events/history`);
+  assert.equal(unauthed.status, 401, `expected 401 without a token, got ${unauthed.status}`);
+
+  const authed = await fetch(`${baseUrl}/events/history`, {
+    headers: { Authorization: `Bearer ${DEV_TOKEN}` },
+  });
+  assert.equal(authed.status, 200, `expected 200 with a valid token, got ${authed.status}`);
+  const body = await authed.json();
+  assert.ok(Array.isArray(body), "history body should be a JSON array");
 });

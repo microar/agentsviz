@@ -117,7 +117,12 @@ async function main() {
   console.log("== Step 1: start the real event server as a child process ==");
   const port = await findFreePort();
   const baseUrl = `http://localhost:${port}`;
-  const wsUrl = `ws://localhost:${port}/ws`;
+  // Auth token for /events + the /ws handshake (issue #52). No
+  // AGENTSVIZ_API_KEYS is set on the spawned server, so it accepts only
+  // the shared dev token — which the hooks-emitter sender also defaults
+  // to, so the hook POSTs need no extra env; only the raw WS URL does.
+  const DEV_TOKEN = "dev-local-token";
+  const wsUrl = `ws://localhost:${port}/ws?token=${DEV_TOKEN}`;
   const eventsUrl = `${baseUrl}/events`;
 
   serverProcess = spawn(process.execPath, ["dist/index.js"], {

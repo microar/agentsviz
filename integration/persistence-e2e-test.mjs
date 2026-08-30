@@ -26,6 +26,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+// The server requires an auth token on /events, /events/history, and the
+// /ws handshake (issue #52). With no AGENTSVIZ_API_KEYS set on the spawned
+// servers they accept only this shared dev token.
+const DEV_TOKEN = "dev-local-token";
+
 const failures = [];
 const runningServers = new Set();
 
@@ -68,7 +73,10 @@ async function waitForHealth(baseUrl, timeoutMs = 15000) {
 function postEvent(baseUrl, event) {
   return fetch(`${baseUrl}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${DEV_TOKEN}`,
+    },
     body: JSON.stringify(event),
   });
 }
@@ -160,7 +168,7 @@ async function main() {
       assert(res.status === 202, `event ${e.type} accepted (202), got ${res.status}`);
     }
 
-    const snapshot1 = await fetchSnapshot(`ws://localhost:${port1}/ws`);
+    const snapshot1 = await fetchSnapshot(`ws://localhost:${port1}/ws?token=${DEV_TOKEN}`);
     assert(snapshot1.agents.length === 2, `server #1 snapshot has 2 agents (got ${snapshot1.agents.length})`);
 
     console.log("== Step 3: kill server #1, start server #2 on the SAME DB, no events replayed over the wire ==");
@@ -176,7 +184,7 @@ async function main() {
     );
 
     console.log("== Step 4: a fresh client sees the prior run's reconstructed state ==");
-    const snapshot2 = await fetchSnapshot(`ws://localhost:${port2}/ws`);
+    const snapshot2 = await fetchSnapshot(`ws://localhost:${port2}/ws?token=${DEV_TOKEN}`);
     const orch2 = snapshot2.agents.find((a) => a.agentId === orchId);
     const worker2 = snapshot2.agents.find((a) => a.agentId === workerId);
 
@@ -197,7 +205,7 @@ async function main() {
     );
 
     console.log("== Step 5: /events/history on server #2 replays the pre-restart events ==");
-    const history = await (await fetch(`${baseUrl2}/events/history`)).json();
+    const history = await (await fetch(`${baseUrl2}/events/history`, { headers: { Authorization: `Bearer ${DEV_TOKEN}` } })).json();
     assert(Array.isArray(history) && history.length === 5, `history spans the previous run (got ${history?.length})`);
     assert(history[0]?.agentId === orchId && history[0]?.type === "agent_start", "history is oldest-first, same shape as POSTed");
 
@@ -209,7 +217,7 @@ async function main() {
       team,
       status: "success",
     });
-    const historyAfter = await (await fetch(`${baseUrl2}/events/history`)).json();
+    const historyAfter = await (await fetch(`${baseUrl2}/events/history`, { headers: { Authorization: `Bearer ${DEV_TOKEN}` } })).json();
     assert(historyAfter.length === 6, `new event appended to the persisted history (got ${historyAfter.length})`);
     await stopServer(server2);
 
@@ -230,7 +238,7 @@ async function main() {
       agentId: `degraded-${runId}`,
     });
     assert(res3.status === 202, `server still accepts events with persistence disabled (got ${res3.status})`);
-    const snapshot3 = await fetchSnapshot(`ws://localhost:${port3}/ws`);
+    const snapshot3 = await fetchSnapshot(`ws://localhost:${port3}/ws?token=${DEV_TOKEN}`);
     assert(
       snapshot3.agents.some((a) => a.agentId === `degraded-${runId}`),
       "live in-memory pipeline still works with persistence disabled",

@@ -37,6 +37,40 @@ Both POST to the same `/events` endpoint and are validated by the same
 for the wire format either one produces — see each package's README for
 its own setup and payload-mapping details.
 
+## Authentication
+
+The wire envelope is transport-agnostic, but the reference server
+(`server/`) gates its endpoints on a bearer token so an open port can't
+be used to forge agent events or silently observe real agents' tool
+inputs/outputs (issue #52):
+
+| Endpoint | Token sent as |
+|---|---|
+| `POST /events` | `Authorization: Bearer <token>` header (also accepts `X-API-Key`). |
+| `GET /events/history` | Same header. |
+| `WebSocket /ws` | `?token=<token>` query param on the handshake URL (browsers can't set handshake headers); the `Authorization` header also works for non-browser clients. |
+
+A missing or unrecognized token gets a clean `401`
+(`{ "error": "Unauthorized", "details": [...] }`) on the HTTP endpoints
+and a rejected handshake on `/ws` — consistent with the `400`
+(invalid event) and `413` (oversized body) responses.
+
+The server validates against an allow-list from `AGENTSVIZ_API_KEYS`
+(comma-separated). When that is unset it accepts **only** a built-in
+local-dev token, `dev-local-token`, which every emitter and the frontend
+also default to — so a stock `npm run dev` works with no configuration.
+Set `AGENTSVIZ_API_KEYS` for anything non-local. Token config per package:
+
+| Package | Variable | Default |
+|---|---|---|
+| `server` | `AGENTSVIZ_API_KEYS` (comma-separated allow-list; `AGENTSVIZ_API_KEY` also accepted) | `dev-local-token` |
+| `instrumentation` | `AGENTSVIZ_API_KEY` env var, or `configure({ apiKey })` | `dev-local-token` |
+| `hooks-emitter` | `AGENTSVIZ_API_KEY` env var | `dev-local-token` |
+| `frontend` | `VITE_AGENTSVIZ_TOKEN` (build-time) | `dev-local-token` |
+
+v1 is a single flat allow-list — no per-team/per-project keys and no
+viewer-vs-emitter scope split.
+
 ## Field reference
 
 These are the complete set of fields used across all event types. Each
