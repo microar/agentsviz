@@ -299,6 +299,57 @@ call, prefer `tool_call_end` with `status: "error"` instead.
 }
 ```
 
+## Redaction (server-side, best-effort)
+
+The wire envelope allows arbitrary JSON in `input`/`result` and arbitrary
+free text in `message`. In real fleets those routinely carry customer
+PII, API responses with tokens, or database rows with private fields.
+Storing and broadcasting that unfiltered is a liability once this tool is
+pointed at production agents rather than toy ones (issue #54).
+
+To limit that, the reference server (`server/`) runs a **redaction pass**
+in `POST /events` after validation and before the event reaches *any*
+consumer — the in-memory `StateStore`, the WebSocket broadcast, the JSONL
+log, and the SQLite store all see the same scrubbed copy. It touches only
+`input`, `result`, and `message`, recursing through nested objects and
+arrays, and combines two mechanisms:
+
+- **Field-name denylist** (case-insensitive): any object key whose name
+  matches (e.g. `password`, `apiKey`, `token`, `secret`, `authorization`,
+  `ssn`, `credit_card`, `cvv`, …) has its **entire** value replaced with
+  `[REDACTED]`, whatever the value's shape.
+- **Value patterns**: every string leaf is matched against regexes for
+  common secret/token/PII shapes — OpenAI-style `sk-…` keys, `Bearer`/`Basic`
+  authorization values, AWS/GitHub/Slack/Google key formats, JWTs, PEM
+  private-key blocks, email addresses, and credit-card-like digit groups —
+  and each match is replaced with `[REDACTED]`.
+
+Non-string, non-object leaves (numbers, booleans, `null`) pass through
+untouched unless their key is on the denylist.
+
+### Configuration (server env vars)
+
+| Var | Default | Effect |
+|---|---|---|
+| `AGENTSVIZ_REDACTION` | on | `off` / `0` / `false` / `no` disables the pass entirely. Safe-by-default: on unless explicitly turned off. |
+| `AGENTSVIZ_REDACT_FIELDS` | — | Extra comma-separated field names to add to the denylist. |
+| `AGENTSVIZ_REDACT_PATTERNS` | — | Extra comma-separated regex sources to add to the value-pattern list (compiled global + case-insensitive; an un-compilable entry is warned about and skipped). |
+
+Regexes and the denylist set are compiled once at startup, so the
+`/events` hot path just walks the payload — no meaningful per-event
+overhead for typical payload sizes.
+
+### Not a compliance guarantee
+
+This is **best-effort pattern matching, not a guarantee**. Novel key
+shapes, secrets split across multiple fields, base64/gzipped blobs, and
+sensitive data that simply looks like ordinary prose will pass through.
+Redaction here reduces casual exposure in the dashboard and its logs; it
+is **not** a substitute for data-handling controls in the agents
+themselves. Agents feeding genuinely sensitive data into tool calls
+remain responsible for not doing so, or for pre-redacting it before it is
+emitted. See [`/SECURITY.md`](../SECURITY.md).
+
 ## Summary: field usage by event type
 
 | Field       | agent_start | agent_stop | tool_call_start | tool_call_end | log | error |
