@@ -2,9 +2,13 @@
 
 Minimal Node/Express + WebSocket server that ingests agent lifecycle events,
 broadcasts them to all connected clients, and reconstructs current state
-(agents, tool calls, team map) in an in-memory store. No external DB or
-disk persistence — state lives only in the running process and is rebuilt
-from scratch on restart.
+(agents, tool calls, team map) in an in-memory store. The in-memory store
+is still the live read path, but it is now backed by a persistent event
+store (SQLite via Node's built-in `node:sqlite`): every accepted event is
+durably recorded, and on startup the in-memory view is rebuilt by replaying
+that recorded stream instead of starting empty — so a restart, crash, or
+deploy no longer wipes agent/tool-call/team state. See "Persistent event
+store" below.
 
 ## Getting started
 
@@ -21,6 +25,7 @@ to port `4000`).
 | Env var         | Default                                   | Description |
 |-----------------|--------------------------------------------|--------------|
 | `PORT`          | `4000`                                     | Port the HTTP + WebSocket server listens on. |
+| `AGENTSVIZ_DB_PATH` | `server/data/agentsviz.db`             | Path to the persistent SQLite event store (see "Persistent event store" below). Use `:memory:` for an ephemeral DB. |
 | `EVENT_LOG_PATH`| `server/data/events-<start-timestamp>.jsonl` | Path to the JSONL event log file (see "Event log" below). |
 | `AGENT_STALE_TIMEOUT_MS` | `300000` (5 min)                  | How long an agent can go without any event before it's presumed dead and marked `stopped` (see "Stale agent reaping" below). |
 | `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)              | How often the stale-agent sweep runs. |
@@ -141,6 +146,49 @@ event, so open dashboards update live without a page refresh. See
 `integration/stale-agent-e2e-test.mjs` for the end-to-end version against
 a real running server).
 
+## Persistent event store
+
+The in-memory state store above is a derived, in-process view; the durable
+source of truth is a SQLite database written by
+`server/src/eventRepository.ts` using Node's built-in `node:sqlite`
+(`DatabaseSync`) — **zero external dependency**, in keeping with this
+package's minimal-tooling style. It can be swapped for a Postgres-backed
+implementation of the same small surface (`append` / `readAll` / `count`)
+for multi-instance deployments without touching callers.
+
+- **What's stored**: one row per accepted event in an `events` table whose
+  columns mirror the envelope in
+  [`/docs/event-schema.md`](../docs/event-schema.md) (`type`, `timestamp`,
+  `agent_id`, `team`, `caller`, `tool`, `input`, `result`, `status`,
+  `message`), plus the verbatim JSON (`raw`) for lossless replay and a
+  server-side `received_at`.
+- **Design choice — replay on startup, not read-through cache**:
+  `StateStore` (`store.ts`) is left exactly as-is — a pure in-memory
+  reduction of the event stream, still mirrored by the frontend's
+  `applyEvent`. On boot, `index.ts` reads every persisted event
+  (oldest-first) and feeds it back through `StateStore.applyEvent`, so the
+  reconstructed view is identical to what a live run would have produced.
+  This keeps the hot path (validate → store → broadcast) unchanged and
+  adds nothing to per-event latency.
+- **Never blocks / never crashes ingestion**: `append` is fire-and-forget
+  and wrapped — exactly like the JSONL logger. If the driver is
+  unavailable or the file can't be opened, the repository logs a
+  `console.warn` and degrades to a disabled no-op (`enabled === false`);
+  the server then behaves exactly as the old in-memory-only scaffold.
+  Individual write failures are logged and swallowed.
+- **`GET /events/history`** now reads from this store when it's enabled, so
+  the frontend timeline scrubber's history spans **every** server run, not
+  just the current process. It falls back to the current run's JSONL file
+  when persistence is disabled.
+- **Location**: `server/data/agentsviz.db` by default (the directory is
+  created automatically; it's gitignored). Override with `AGENTSVIZ_DB_PATH`,
+  or set it to `:memory:` for an ephemeral DB (used by the unit tests). A
+  `-wal`/`-shm` sidecar file is normal (WAL journal mode).
+- **Schema versioning**: `PRAGMA user_version` holds the applied schema
+  version; `MIGRATIONS` in `eventRepository.ts` is an ordered, append-only
+  list of DDL steps applied in a transaction on startup. Minimal but real —
+  adding a column later is a new array entry, no manual DB surgery.
+
 ## Event log (JSONL)
 
 As a cheap foundation for future replay/debugging (see issue #13), every
@@ -170,10 +218,11 @@ object per line, in acceptance order.
 
 ## Notes
 
-- No database — events are validated and applied to the in-memory state
-  store, which still resets on restart. Accepted events are additionally
-  appended to a local JSONL file for future replay (see "Event log"
-  above); this is a cheap append-only log, not a queryable persistence
-  layer.
+- Events are validated, applied to the in-memory state store, broadcast,
+  and then persisted to SQLite (see "Persistent event store" above) — the
+  in-memory view is rebuilt from that store on restart rather than reset.
+  Accepted events are *also* still appended to a per-run JSONL file (see
+  "Event log" below); that log is now redundant with the SQLite store and
+  kept only as a plain-text convenience.
 - Request logging is a lightweight custom middleware (method, path,
   status, duration) writing to stdout — no external logging library.
