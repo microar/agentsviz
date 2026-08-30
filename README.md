@@ -31,9 +31,13 @@ instrumentation/ or hooks-emitter/  --POST /events-->  server/  --WebSocket broa
   accepts events at `POST /events`, validates them, applies them to an
   in-memory state store (agents, tool calls, team map), and broadcasts
   each accepted event to every connected WebSocket client at `/ws`. New
-  clients get a full state snapshot on connect. Accepted events are also
-  appended to a local JSONL file as a cheap foundation for future replay.
-  No external database; state resets on restart.
+  clients get a full state snapshot on connect. Accepted events are
+  persisted to a local SQLite database (Node's built-in `node:sqlite`, no
+  external dependency) and also appended to a JSONL file; on startup the
+  in-memory state store is rebuilt by replaying the persisted events, so
+  agent/tool-call/team state survives a restart, crash, or deploy. See
+  [`server/README.md`](server/README.md) for the storage design and
+  `AGENTSVIZ_DB_PATH`.
 - **[`frontend/`](frontend/README.md)** — a React + Vite app that
   connects to the server's WebSocket endpoint (with automatic reconnect)
   and renders the resulting state across a **Graph** tab (live agent
@@ -186,6 +190,7 @@ for those, use `instrumentation/` instead.
 | Package          | Variable                    | Default                                      | Description |
 |-------------------|------------------------------|-----------------------------------------------|--------------|
 | `server`          | `PORT`                       | `4000`                                        | Port the HTTP + WebSocket server listens on. |
+| `server`          | `AGENTSVIZ_DB_PATH`         | `server/data/agentsviz.db`                    | Path to the persistent SQLite event store (or `:memory:`). State is rebuilt from it on startup. |
 | `server`          | `EVENT_LOG_PATH`             | `server/data/events-<start-timestamp>.jsonl`  | Path to the JSONL event log file. |
 | `server`          | `AGENT_STALE_TIMEOUT_MS`     | `300000` (5 min)                              | How long an agent can go without any event before the server presumes it dead and marks it `stopped` (`inferred: true`) — see "Stale agents" below. |
 | `server`          | `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)                              | How often the server sweeps for stale agents. |
