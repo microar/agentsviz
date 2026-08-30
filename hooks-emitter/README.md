@@ -150,6 +150,17 @@ Claude Code version supports one in the hook entry).
 export AGENTSVIZ_EVENTS_URL=http://localhost:4000/events
 ```
 
+The event server requires a bearer token on every POST (issue #52). The
+sender adds `Authorization: Bearer $AGENTSVIZ_API_KEY`, falling back to
+the shared `dev-local-token` the server accepts by default — so a stock
+local setup needs nothing extra. Set `AGENTSVIZ_API_KEY` (same
+environment as `AGENTSVIZ_EVENTS_URL`) to match a server configured with
+`AGENTSVIZ_API_KEYS`.
+
+```bash
+export AGENTSVIZ_API_KEY=dev-local-token
+```
+
 ## Safety guarantees
 
 These match the acceptance criteria in issue #29:

@@ -6,6 +6,14 @@ import { validateEvent, type AgentEvent } from "./eventSchema.js";
 import { logEvent, getLogFilePath } from "./eventLogger.js";
 import { requestLogger } from "./logger.js";
 import { StateStore } from "./store.js";
+import {
+  DEV_FALLBACK_TOKEN,
+  getAllowedTokens,
+  isAllowed,
+  requireApiToken,
+  tokenFromUpgradeRequest,
+  usingDevFallback,
+} from "./auth.js";
 
 const PORT = Number(process.env.PORT) || 4000;
 // How long an agent can go without any event (of any type) before the
@@ -24,21 +32,56 @@ const app = express();
 // realistic payloads while still bounding memory per request; configurable
 // via env var following the PORT/AGENT_STALE_TIMEOUT_MS pattern above.
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "5mb";
-app.use(express.json({ limit: JSON_BODY_LIMIT }));
+// Token allow-list for the data endpoints (issue #52). Resolved once at
+// startup: `POST /events`, `GET /events/history`, and the `/ws` handshake
+// all check an incoming token against this list. Defaults to the built-in
+// dev token when no env var is set — see auth.ts.
+const ALLOWED_TOKENS = getAllowedTokens();
+
 app.use(requestLogger);
-// Permissive CORS: this is a local/internal dev dashboard with no auth, and
-// the frontend (Vite dev server) and this server run on different ports in
+// Permissive CORS: this is a local/internal dev dashboard, and the
+// frontend (Vite dev server) and this server run on different ports in
 // development. Needed specifically since issue #43's `/events/history` is
 // fetched directly by the browser (unlike the WS connection, which isn't
 // subject to CORS) — without this, a cross-port dev setup gets silently
-// blocked by the browser rather than a clear server-side error.
-app.use((_req: Request, res: Response, next: (err?: unknown) => void) => {
+// blocked by the browser rather than a clear server-side error. Since #52
+// the browser also sends an `Authorization` header on that fetch, which
+// makes it a non-simple request — so allow that header and answer the
+// preflight `OPTIONS` before the auth gate (a preflight carries no auth).
+app.use((req: Request, res: Response, next: (err?: unknown) => void) => {
   res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "authorization, content-type");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
   next();
 });
+// Auth gate: every `/events*` request must carry a valid token. Mounted
+// before `express.json()` so an unauthenticated request gets a clean 401
+// without the body being parsed. `/health` stays open (liveness only, no
+// agent data).
+app.use("/events", requireApiToken(ALLOWED_TOKENS));
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 const httpServer = createServer(app);
-const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+// Reject an unauthenticated WebSocket during the handshake (issue #52),
+// before `connection` fires or any snapshot is sent. Browser clients
+// can't set headers on `new WebSocket()`, so the token comes in as
+// `?token=<token>` on the URL; header auth is also accepted for
+// non-browser clients (see tokenFromUpgradeRequest).
+const wss = new WebSocketServer({
+  server: httpServer,
+  path: "/ws",
+  verifyClient: ({ req }, done) => {
+    if (isAllowed(tokenFromUpgradeRequest(req), ALLOWED_TOKENS)) {
+      done(true);
+      return;
+    }
+    done(false, 401, "Unauthorized");
+  },
+});
 const store = new StateStore();
 
 /** Broadcast an accepted event, as JSON, to every currently-connected WS client. */
@@ -158,4 +201,10 @@ staleAgentInterval.unref();
 httpServer.listen(PORT, () => {
   console.log(`Event server listening on http://localhost:${PORT}`);
   console.log(`WebSocket broadcast endpoint: ws://localhost:${PORT}/ws`);
+  if (usingDevFallback()) {
+    console.warn(
+      `[auth] No AGENTSVIZ_API_KEYS set — accepting only the built-in dev token ("${DEV_FALLBACK_TOKEN}"). ` +
+        "Set AGENTSVIZ_API_KEYS (comma-separated) to lock this down for anything non-local.",
+    );
+  }
 });

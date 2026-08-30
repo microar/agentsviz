@@ -173,6 +173,8 @@ Env vars it respects (set in the environment Claude Code runs hooks in):
 
 - `AGENTSVIZ_EVENTS_URL` — where to POST events. Defaults to
   `http://localhost:4000/events`.
+- `AGENTSVIZ_API_KEY` — bearer token sent on every POST (see
+  "Authentication" below). Defaults to the shared dev token.
 - `AGENTSVIZ_TEAM` — overrides the derived `team` field. If unset, `team`
   falls back to the basename of the session's working directory.
 
@@ -190,11 +192,36 @@ for those, use `instrumentation/` instead.
 | `server`          | `AGENT_STALE_TIMEOUT_MS`     | `300000` (5 min)                              | How long an agent can go without any event before the server presumes it dead and marks it `stopped` (`inferred: true`) — see "Stale agents" below. |
 | `server`          | `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)                              | How often the server sweeps for stale agents. |
 | `server`          | `JSON_BODY_LIMIT`            | `5mb`                                         | Max size of a POST `/events` JSON body. Requests over this get a clean `413`. |
+| `server`          | `AGENTSVIZ_API_KEYS`        | `dev-local-token` (built-in dev token)        | Comma-separated allow-list of bearer tokens for `POST /events`, `GET /events/history`, and the `/ws` handshake — see "Authentication" below. |
 | `frontend`        | `VITE_WS_URL`                | derived from `window.location` + port `4000`  | WebSocket URL the frontend connects to. Set this if the server isn't on the same host or the default port. |
+| `frontend`        | `VITE_AGENTSVIZ_TOKEN`      | `dev-local-token`                             | Build-time viewer token sent on the `/ws` handshake and `/events/history` fetch — see "Authentication" below. |
 | `frontend` (dev)  | *(Vite dev server port)*     | `5173`                                        | Local dev server port, printed on `npm run dev`. |
 | `instrumentation` | `INSTRUMENTATION_SERVER_URL` | `http://localhost:4000/events`                | Where instrumented agents POST events. Can also be set via `configure({ serverUrl })`. |
+| `instrumentation` | `AGENTSVIZ_API_KEY`         | `dev-local-token`                             | Bearer token sent on every POST. Can also be set via `configure({ apiKey })`. |
 | `hooks-emitter`   | `AGENTSVIZ_EVENTS_URL`       | `http://localhost:4000/events`                | Where the hook script POSTs events. |
+| `hooks-emitter`   | `AGENTSVIZ_API_KEY`         | `dev-local-token`                             | Bearer token sent on every POST. |
 | `hooks-emitter`   | `AGENTSVIZ_TEAM`             | *(basename of the session's `cwd`)*           | Overrides the derived `team` field. |
+
+## Authentication
+
+`POST /events`, `GET /events/history`, and the `/ws` WebSocket handshake
+require a bearer token (issue #52) — otherwise anyone who can reach the
+port could forge fake agent events or silently observe every real
+agent's tool inputs/outputs by connecting to `/ws`.
+
+- Emitters and browser `fetch` send `Authorization: Bearer <token>`.
+- The frontend's WebSocket sends `?token=<token>` on the handshake URL,
+  since browser `WebSocket` clients can't set headers.
+- A missing/invalid token gets a clean `401` on HTTP and a rejected
+  handshake on `/ws`. `/health` stays open.
+
+The server matches tokens against `AGENTSVIZ_API_KEYS` (comma-separated).
+**When it's unset, the server accepts only the built-in dev token
+`dev-local-token`**, which `instrumentation/`, `hooks-emitter/`, and the
+frontend all default to — so `npm run dev` works out of the box with no
+configuration. For anything beyond local use, set `AGENTSVIZ_API_KEYS` on
+the server and the matching per-package token var above. v1 is a single
+shared allow-list — no per-team/per-project keys yet.
 
 ## Stale agents (no `agent_stop` received)
 
@@ -231,7 +258,15 @@ reaped). Tune `AGENT_STALE_TIMEOUT_MS`/`AGENT_STALE_CHECK_INTERVAL_MS`
   is actually running and reachable at the WebSocket URL the frontend is
   using (check the browser console/network tab, and `VITE_WS_URL` if set)
   — the frontend's WS client retries with backoff, so a server that
-  starts late will eventually connect on its own.
+  starts late will eventually connect on its own. If the handshake is
+  getting a `401`, the token doesn't match: the server has
+  `AGENTSVIZ_API_KEYS` set to something the frontend's
+  `VITE_AGENTSVIZ_TOKEN` (baked in at build time) isn't in — see
+  "Authentication" above.
+- **Agent/hook POSTs get a `401`.** The emitter's `AGENTSVIZ_API_KEY`
+  (or `configure({ apiKey })`) isn't in the server's `AGENTSVIZ_API_KEYS`
+  allow-list. With neither side configured, both default to
+  `dev-local-token` and it just works.
 - **Instrumented agent doesn't show up anywhere.** Check that
   `INSTRUMENTATION_SERVER_URL` (or `configure({ serverUrl })`) points at
   the running server's `/events` endpoint. By design, instrumentation

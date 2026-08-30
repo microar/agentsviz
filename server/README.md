@@ -21,9 +21,31 @@ to port `4000`).
 | Env var         | Default                                   | Description |
 |-----------------|--------------------------------------------|--------------|
 | `PORT`          | `4000`                                     | Port the HTTP + WebSocket server listens on. |
+| `AGENTSVIZ_API_KEYS` | `dev-local-token` (built-in dev token) | Comma-separated allow-list of bearer tokens accepted on `POST /events`, `GET /events/history`, and the `/ws` handshake (see "Authentication" below). `AGENTSVIZ_API_KEY` (singular) is also accepted. |
 | `EVENT_LOG_PATH`| `server/data/events-<start-timestamp>.jsonl` | Path to the JSONL event log file (see "Event log" below). |
 | `AGENT_STALE_TIMEOUT_MS` | `300000` (5 min)                  | How long an agent can go without any event before it's presumed dead and marked `stopped` (see "Stale agent reaping" below). |
 | `AGENT_STALE_CHECK_INTERVAL_MS` | `30000` (30s)              | How often the stale-agent sweep runs. |
+| `JSON_BODY_LIMIT` | `5mb`                                   | Max size of a `POST /events` JSON body; larger requests get a clean `413`. |
+
+## Authentication
+
+`POST /events`, `GET /events/history`, and the `/ws` handshake require a
+bearer token (issue #52) — without one, an open port could be used to
+forge agent events or silently observe real agents' tool inputs/outputs.
+
+- HTTP endpoints: `Authorization: Bearer <token>` (or `X-API-Key: <token>`).
+- WebSocket: `?token=<token>` on the handshake URL, since browser
+  `WebSocket` clients can't set headers (the `Authorization` header is
+  also accepted for non-browser clients).
+- Missing/invalid token → `401 { "error": "Unauthorized", "details": [...] }`
+  on HTTP, rejected handshake on `/ws`.
+- `/health` is unauthenticated (liveness only, no agent data).
+
+Tokens are matched against `AGENTSVIZ_API_KEYS` (comma-separated). When
+unset, the server accepts **only** the built-in `dev-local-token`, which
+`instrumentation/`, `hooks-emitter/`, and the frontend all default to —
+so local `npm run dev` needs no setup. Set `AGENTSVIZ_API_KEYS` for
+anything non-local.
 
 ## Scripts
 
@@ -50,12 +72,15 @@ Ingests a single event and validates it against the schema defined in
   ```json
   { "error": "Invalid event", "details": ["<one message per problem found>"] }
   ```
+- **Missing/invalid token** → `401 Unauthorized`, body
+  `{ "error": "Unauthorized", "details": [...] }` (see "Authentication" above).
 
 Example:
 
 ```bash
 curl -i -X POST http://localhost:4000/events \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer dev-local-token' \
   -d '{
     "type": "log",
     "timestamp": "2026-08-24T14:31:04.000Z",
@@ -69,7 +94,11 @@ curl -i -X POST http://localhost:4000/events \
 Returns `200 OK` with `{ "status": "ok", "clients": <n> }` — useful for a
 quick liveness check and to see how many WebSocket clients are connected.
 
-### WebSocket: `ws://localhost:<port>/ws`
+### WebSocket: `ws://localhost:<port>/ws?token=<token>`
+
+The handshake requires a token as a `?token=` query param (see
+"Authentication" above); an unauthenticated handshake is rejected with
+`401` before `connection` fires or any snapshot is sent.
 
 On connect, the server immediately sends a **snapshot message** reflecting
 current state, before any live events:
@@ -95,7 +124,7 @@ events that produced that snapshot.
 Example (using `wscat`):
 
 ```bash
-npx wscat -c ws://localhost:4000/ws
+npx wscat -c 'ws://localhost:4000/ws?token=dev-local-token'
 ```
 
 ## State store

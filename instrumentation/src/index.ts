@@ -34,6 +34,14 @@ export type {
 /** Default target if nothing else is configured. */
 const DEFAULT_SERVER_URL = "http://localhost:4000/events";
 const DEFAULT_TIMEOUT_MS = 2000;
+/**
+ * Shared local-dev token (issue #52). The event server requires a bearer
+ * token on every POST; with no `AGENTSVIZ_API_KEYS` configured it accepts
+ * only this built-in value, so defaulting to it keeps `npm run dev` +
+ * an instrumented agent working with zero setup. Override for anything
+ * real via `configure({ apiKey })` or the `AGENTSVIZ_API_KEY` env var.
+ */
+const DEFAULT_API_KEY = "dev-local-token";
 
 export interface InstrumentationConfig {
   /** Stable unique identifier for this agent instance. */
@@ -42,6 +50,12 @@ export interface InstrumentationConfig {
   team?: string;
   /** Event server endpoint to POST events to. */
   serverUrl?: string;
+  /**
+   * Bearer token sent as `Authorization: Bearer <apiKey>` on every POST
+   * (issue #52). Falls back to the `AGENTSVIZ_API_KEY` env var, then to a
+   * shared local-dev default. Set to an empty string to send no header.
+   */
+  apiKey?: string;
   /** Abort the POST after this many ms so a dead server can't hang anything. */
   timeoutMs?: number;
   /** Flip off entirely (e.g. in tests) — emitters become true no-ops. */
@@ -68,14 +82,22 @@ function envServerUrl(): string | undefined {
   return process.env.INSTRUMENTATION_SERVER_URL || undefined;
 }
 
+function envApiKey(): string | undefined {
+  if (typeof process === "undefined" || !process.env) return undefined;
+  return process.env.AGENTSVIZ_API_KEY || undefined;
+}
+
 function resolveConfig(overrides: InstrumentationConfig): Required<
-  Pick<InstrumentationConfig, "serverUrl" | "timeoutMs" | "enabled" | "onError">
+  Pick<InstrumentationConfig, "serverUrl" | "timeoutMs" | "enabled" | "onError" | "apiKey">
 > &
   Pick<InstrumentationConfig, "agentId" | "team"> {
   return {
     agentId: overrides.agentId,
     team: overrides.team,
     serverUrl: overrides.serverUrl ?? envServerUrl() ?? DEFAULT_SERVER_URL,
+    // `?? DEFAULT` (not `||`) so an explicit `apiKey: ""` means "send no
+    // Authorization header" rather than silently falling back.
+    apiKey: overrides.apiKey ?? envApiKey() ?? DEFAULT_API_KEY,
     timeoutMs: overrides.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     enabled: overrides.enabled ?? true,
     onError: overrides.onError ?? defaultOnError,
@@ -102,7 +124,10 @@ function dispatch(event: AgentEvent, cfg: ReturnType<typeof resolveConfig>): voi
     // Deliberately not awaited — this is the "fire" in fire-and-forget.
     fetch(cfg.serverUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
+      },
       body: JSON.stringify(event),
       signal: controller.signal,
     })

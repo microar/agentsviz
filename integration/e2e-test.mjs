@@ -81,7 +81,12 @@ async function main() {
   console.log("== Step 1: start the real event server as a child process ==");
   const port = await findFreePort();
   const baseUrl = `http://localhost:${port}`;
-  const wsUrl = `ws://localhost:${port}/ws`;
+  // The server requires an auth token on /events and the /ws handshake
+  // (issue #52). With no AGENTSVIZ_API_KEYS set it accepts only the shared
+  // dev token, which the instrumentation helper also defaults to — so the
+  // POSTs below need no extra wiring; only the raw WebSocket URL does.
+  const DEV_TOKEN = "dev-local-token";
+  const wsUrl = `ws://localhost:${port}/ws?token=${DEV_TOKEN}`;
 
   serverProcess = spawn(process.execPath, ["dist/index.js"], {
     cwd: SERVER_DIR,

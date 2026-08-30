@@ -25,6 +25,38 @@ export interface WsClient {
   disconnect: () => void
 }
 
+/**
+ * Shared viewer token (issue #52). The event server requires a token on
+ * the `/ws` handshake and the `/events/history` fetch; with no
+ * `AGENTSVIZ_API_KEYS` configured server-side it accepts only this
+ * built-in value, so this default keeps `npm run dev` working with no
+ * setup. Override at build time with `VITE_AGENTSVIZ_TOKEN`.
+ */
+const DEV_FALLBACK_TOKEN = 'dev-local-token'
+
+/** The viewer token to authenticate WS/history requests with. */
+export function viewerToken(): string {
+  const fromEnv = import.meta.env.VITE_AGENTSVIZ_TOKEN as string | undefined
+  return fromEnv && fromEnv.length > 0 ? fromEnv : DEV_FALLBACK_TOKEN
+}
+
+/**
+ * Returns `url` with the `token` query param set — browser `WebSocket`
+ * clients can't send an `Authorization` header on the handshake, so the
+ * token rides on the URL instead.
+ */
+export function withToken(url: string, token: string = viewerToken()): string {
+  const base = typeof window !== 'undefined' ? window.location.href : 'http://localhost'
+  try {
+    const parsed = new URL(url, base)
+    parsed.searchParams.set('token', token)
+    return parsed.toString()
+  } catch {
+    const sep = url.includes('?') ? '&' : '?'
+    return `${url}${sep}token=${encodeURIComponent(token)}`
+  }
+}
+
 /** Resolves the default WebSocket URL for the event server, honoring VITE_WS_URL. */
 export function defaultWsUrl(): string {
   const fromEnv = import.meta.env.VITE_WS_URL as string | undefined

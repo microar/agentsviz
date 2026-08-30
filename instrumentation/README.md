@@ -38,6 +38,10 @@ configure({
   team: "research-team",             // optional, for multi-agent setups
   serverUrl: "http://localhost:4000/events", // defaults to this if omitted
   // or set INSTRUMENTATION_SERVER_URL in the environment instead
+  apiKey: "dev-local-token",         // bearer token for the event server (issue #52);
+  // defaults to $AGENTSVIZ_API_KEY, then the shared "dev-local-token" — so a
+  // stock local `npm run dev` needs nothing here. Set an empty string to
+  // send no Authorization header.
 });
 
 async function run() {
