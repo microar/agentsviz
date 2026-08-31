@@ -12,6 +12,9 @@
  *  - tool node: neutral gray
  *  - edge pending: amber, dashed + animated
  *  - edge settled: neutral gray, tinted green/red to match the call outcome
+ *  - sub-agent link (#71): muted blue, plain static line + arrowhead —
+ *    deliberately outside the amber/green/red/gray tool-edge language so
+ *    "who spawned whom" reads as a different kind of relationship
  */
 
 export const COLORS = {
@@ -34,6 +37,13 @@ export const COLORS = {
   edgeSuccess: 'rgba(22, 163, 74, 0.55)',
   edgeError: 'rgba(220, 38, 38, 0.55)',
   edgePending: '#d97706',
+
+  // Parent agent -> spawned sub-agent edge (issue #71). Drawn by
+  // `drawSubAgentEdge` in draw-edges.ts as a plain static line with an
+  // arrowhead pointing at the child — no marching-ants, no particles.
+  // Kept in sync by hand with `.graph-edge-swatch--subagent` in App.css
+  // (asserted by scripts/verify-legend-colors.mjs).
+  subAgentLink: 'rgba(99, 140, 210, 0.75)',
 
   label: 'rgba(148, 148, 158, 0.95)',
   labelMuted: 'rgba(127, 127, 127, 0.75)',

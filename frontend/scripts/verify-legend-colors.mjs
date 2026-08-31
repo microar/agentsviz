@@ -55,6 +55,7 @@ const pairings = [
   { legend: '.graph-swatch--stale', prop: 'background', colorsKey: 'staleStroke' },
   { legend: '.graph-edge-swatch', prop: 'background', colorsKey: 'edgePending' },
   { legend: '.graph-edge-swatch--settled', prop: 'background', colorsKey: 'edgeSettled' },
+  { legend: '.graph-edge-swatch--subagent', prop: 'background', colorsKey: 'subAgentLink' },
 ]
 
 let failures = 0

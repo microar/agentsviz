@@ -297,6 +297,10 @@
   background: rgba(127, 127, 127, 0.4); /* COLORS.edgeSettled */
 }
 
+.graph-edge-swatch--subagent {
+  background: rgba(99, 140, 210, 0.75); /* COLORS.subAgentLink */
+}
+
 .graph-hint {
   margin-bottom: 0.75rem;
   font-size: 0.8rem;

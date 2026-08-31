@@ -21,13 +21,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentState } from '../types'
 import { drawAgentNode } from './draw-agents'
 import { drawToolNode } from './draw-tool-nodes'
-import { drawEdge, type Edge } from './draw-edges'
+import { drawEdge, drawSubAgentEdge, type Edge } from './draw-edges'
 import { drawEdgeParticles, updateEdgeAnimStates, type EdgeAnimState } from './draw-particles'
-import { computeFade } from './fade'
+import { computeFade, isSubAgent } from './fade'
 import { hitTestAgent } from './hit-detection'
 import {
   AGENT_CENTER,
   AGENT_SPACING,
+  orderByLineage,
   TOOL_CENTER,
   TOOL_SPACING,
   useStableLayout,
@@ -94,9 +95,24 @@ export function GraphCanvas({
   // (possibly 0, possibly a pre-layout guess) it had on first paint.
   const [sizeTick, setSizeTick] = useState(0)
 
-  const agentIds = useMemo(() => allAgents.map((a) => a.agentId), [allAgents])
+  // Lineage-ordered (issue #71) so `useStableLayout` puts a parent and the
+  // sub-agents it spawns on contiguous spiral slots — see `orderByLineage`.
+  const agentIds = useMemo(() => orderByLineage(allAgents), [allAgents])
   const knownAgentIdsRef = useRef(knownAgentIds)
   knownAgentIdsRef.current = knownAgentIds
+
+  // Parent -> spawned-sub-agent pairs (issue #71): every visible agent whose
+  // `caller` names another known agent (reusing `isSubAgent` / the same
+  // `knownAgentIds` set that exempts sub-agents from fade-out). One entry
+  // per (parent, child); no entry when `caller` is absent or names a
+  // non-agent (e.g. the instrumentation library's default `caller: "user"`).
+  const subAgentEdges = useMemo(() => {
+    const pairs: { parent: string; child: string }[] = []
+    for (const agent of allAgents) {
+      if (isSubAgent(agent, knownAgentIds)) pairs.push({ parent: agent.caller!, child: agent.agentId })
+    }
+    return pairs
+  }, [allAgents, knownAgentIds])
   const agentPositions = useStableLayout(agentIds, AGENT_CENTER, AGENT_SPACING)
   const toolPositions = useStableLayout(toolNames, TOOL_CENTER, TOOL_SPACING)
   const bounds = useWorldBounds([agentPositions, toolPositions], 90)
@@ -107,11 +123,13 @@ export function GraphCanvas({
   const agentPositionsRef = useRef(agentPositions)
   const toolPositionsRef = useRef(toolPositions)
   const edgesRef = useRef(edges)
+  const subAgentEdgesRef = useRef(subAgentEdges)
   const selectedRef = useRef(selectedAgentId)
   agentsRef.current = allAgents
   agentPositionsRef.current = agentPositions
   toolPositionsRef.current = toolPositions
   edgesRef.current = edges
+  subAgentEdgesRef.current = subAgentEdges
   selectedRef.current = selectedAgentId
 
   const edgeAnimStatesRef = useRef<Map<string, EdgeAnimState>>(new Map())
@@ -266,6 +284,23 @@ export function GraphCanvas({
       const activeTools = new Set(edgeList.filter((e) => e.call.status === 'pending').map((e) => e.call.tool))
       for (const [tool, pos] of toolPositions) {
         drawToolNode(ctx!, tool, pos, colors.muted, activeTools.has(tool))
+      }
+
+      // Parent -> sub-agent edges (issue #71). Plain static lines drawn
+      // under the agent nodes; each fades with whichever endpoint is more
+      // faded, and is skipped entirely once either endpoint has no position
+      // (removed / never present in a historical snapshot) so it can't keep
+      // a vanished node visually anchored.
+      for (const { parent, child } of subAgentEdgesRef.current) {
+        const from = agentPositions.get(parent)
+        const to = agentPositions.get(child)
+        if (!from || !to) continue
+        const parentAlpha = alphaByAgent.get(parent)
+        const childAlpha = alphaByAgent.get(child)
+        if (parentAlpha === undefined || childAlpha === undefined) continue
+        const alpha = Math.min(parentAlpha, childAlpha)
+        if (alpha <= 0) continue
+        drawSubAgentEdge(ctx!, from, to, alpha)
       }
 
       // Agent nodes (top layer).

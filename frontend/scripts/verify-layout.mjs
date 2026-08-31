@@ -112,6 +112,81 @@ function checkClusterSeparation() {
   if (!ok) failures++
 }
 
+// Issue #71: agent layout slots are handed out in parent -> children
+// depth-first order (see `orderByLineage` in src/graph/layout.ts) so a
+// parent and the sub-agents it spawns land on contiguous phyllotaxis
+// slots, keeping the new parent->child edges short. This re-ports that
+// ordering (kept in sync with the TS by hand, same as the constants
+// above are extracted rather than duplicated) and checks that (1) a
+// parent's children really do land immediately after it in slot order and
+// (2) the points for that arrangement still clear the no-overlap bar
+// (a subset of checkNoOverlap above, asserted explicitly for the tree
+// shape this feature targets).
+function orderByLineage(agents) {
+  const ids = new Set(agents.map((a) => a.agentId))
+  const childrenByParent = new Map()
+  const roots = []
+  for (const { agentId, caller } of agents) {
+    if (caller && caller !== agentId && ids.has(caller)) {
+      const siblings = childrenByParent.get(caller)
+      if (siblings) siblings.push(agentId)
+      else childrenByParent.set(caller, [agentId])
+    } else {
+      roots.push(agentId)
+    }
+  }
+  const ordered = []
+  const seen = new Set()
+  const visit = (id) => {
+    if (seen.has(id)) return
+    seen.add(id)
+    ordered.push(id)
+    for (const child of childrenByParent.get(id) ?? []) visit(child)
+  }
+  for (const root of roots) visit(root)
+  for (const { agentId } of agents) {
+    if (!seen.has(agentId)) {
+      seen.add(agentId)
+      ordered.push(agentId)
+    }
+  }
+  return ordered
+}
+
+function checkLineageLayout() {
+  // A parent P spawning two sub-agents (C2 itself spawning G1), with an
+  // unrelated root R that appeared between P and its children in raw order.
+  const agents = [
+    { agentId: 'P' },
+    { agentId: 'R' },
+    { agentId: 'C1', caller: 'P' },
+    { agentId: 'C2', caller: 'P' },
+    { agentId: 'G1', caller: 'C2' },
+  ]
+  const ordered = orderByLineage(agents)
+  const at = (id) => ordered.indexOf(id)
+  const contiguous = at('C1') === at('P') + 1 && at('C2') === at('P') + 2 && at('G1') === at('C2') + 1
+  console.log(
+    `${contiguous ? 'PASS' : 'FAIL'}: orderByLineage keeps sub-agents contiguous after their parent — [${ordered.join(', ')}]`,
+  )
+  if (!contiguous) failures++
+
+  // Those ids get phyllotaxis slots equal to their position in `ordered`
+  // (useStableLayout assigns slots in first-seen order); check that slot
+  // set doesn't collide.
+  const pts = ordered.map((_, i) => phyllotaxisPoint(i, AGENT_CENTER, AGENT_SPACING))
+  let minDist = Infinity
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) minDist = Math.min(minDist, dist(pts[i], pts[j]))
+  }
+  const ok = minDist > 2 * AGENT_RADIUS
+  console.log(
+    `${ok ? 'PASS' : 'FAIL'}: lineage-ordered agent slots don't overlap — min pairwise distance ` +
+      `${minDist.toFixed(2)}px must exceed 2*radius = ${2 * AGENT_RADIUS}px`,
+  )
+  if (!ok) failures++
+}
+
 console.log(`Layout constants: AGENT_SPACING=${AGENT_SPACING} AGENT_RADIUS=${AGENT_RADIUS} ` +
   `TOOL_SPACING=${TOOL_SPACING} TOOL_SIZE=${TOOL_SIZE}`)
 console.log(`Centers: AGENT_CENTER=(${AGENT_CENTER.x},${AGENT_CENTER.y}) TOOL_CENTER=(${TOOL_CENTER.x},${TOOL_CENTER.y})\n`)
@@ -119,6 +194,7 @@ console.log(`Centers: AGENT_CENTER=(${AGENT_CENTER.x},${AGENT_CENTER.y}) TOOL_CE
 checkNoOverlap('agent nodes', AGENT_CENTER, AGENT_SPACING, AGENT_RADIUS)
 checkNoOverlap('tool nodes', TOOL_CENTER, TOOL_SPACING, TOOL_RADIUS)
 checkClusterSeparation()
+checkLineageLayout()
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`)
