@@ -12,7 +12,7 @@
  * canvas itself no longer depends on this hook's timers for its per-frame
  * opacity, though — see fade.ts's `computeFade`, which the render loop
  * calls every frame to get a continuously-updated alpha (canvas alpha
- * instead of a CSS `transition: opacity`), driven by the same `FADE_MS`
+ * instead of a CSS `transition: opacity`), driven by the same `GRACE_MS`
  * window and the same `stoppedAt` anchor so the two stay in lockstep.
  *
  * Sub-agents (issue #49, see `isSubAgent` in fade.ts) are exempt from
@@ -26,7 +26,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { AgentState } from '../types'
-import { FADE_MS, isSubAgent } from './fade'
+import { GRACE_MS, isSubAgent } from './fade'
 
 export function useGraphFadeOut(agents: AgentState[]): {
   isRemoved: (agentId: string) => boolean
@@ -58,7 +58,7 @@ export function useGraphFadeOut(agents: AgentState[]): {
         if (timers.has(id)) continue // fade already scheduled for this stop
 
         const stoppedAtMs = agent.stoppedAt ? Date.parse(agent.stoppedAt) : now
-        const remaining = FADE_MS - (now - (Number.isNaN(stoppedAtMs) ? now : stoppedAtMs))
+        const remaining = GRACE_MS - (now - (Number.isNaN(stoppedAtMs) ? now : stoppedAtMs))
 
         if (remaining <= 0) {
           setRemovedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))

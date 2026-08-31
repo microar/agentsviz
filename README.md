@@ -57,20 +57,24 @@ instrumentation/ or hooks-emitter/  --POST /events-->  server/  --WebSocket broa
 
 **Prerequisites:** Node.js (v20+ recommended; developed against v24).
 
-Each package (`server/`, `frontend/`, `instrumentation/`, `integration/`)
-manages its own dependencies independently — this is not an npm
-workspaces monorepo, just enough root tooling for a one-command dev
-startup. Install what you need:
+Each package (`server/`, `frontend/`, `instrumentation/`,
+`hooks-emitter/`, `integration/`) builds and manages its own dependencies
+independently — this is not an npm workspaces monorepo. The root
+`package.json` is just enough tooling for a one-command dev startup: its
+`postinstall` fans out `npm install` + `npm run build` to each package
+(except `integration/`) so a fresh clone is ready to run after a single
+`npm install`.
 
 ```bash
-# Root tooling (only needed for the combined `npm run dev` below)
+# Root tooling + every package, in one step: `npm install` at the root
+# runs a `postinstall` that installs and builds `server`, `frontend`,
+# `hooks-emitter`, and `instrumentation`. (Run `npm run setup` by hand any
+# time to redo it.)
 npm install
 
-# Each package you plan to run
-npm install --prefix server
-npm install --prefix frontend
-npm install --prefix instrumentation   # only if instrumenting an agent
-npm install --prefix integration       # only if running the e2e test
+# integration/ is the one package `setup` doesn't touch — install it only
+# if you're running the e2e test:
+npm install --prefix integration
 ```
 
 ### One-command dev startup
@@ -78,14 +82,19 @@ npm install --prefix integration       # only if running the e2e test
 From the repo root:
 
 ```bash
-npm install   # first time only
+npm install   # first time only — also builds every package (see Setup above)
 npm run dev
 ```
 
-This runs `server`'s and `frontend`'s `dev` scripts in parallel via
+This runs the `dev` scripts of `server`, `frontend`, and `hooks-emitter`
+in parallel via
 [`concurrently`](https://www.npmjs.com/package/concurrently), with
-labeled, colored output (`server` in blue, `frontend` in magenta) so you
-can tell which process printed what. Stop both with `Ctrl+C`.
+labeled, colored output (`server` in blue, `frontend` in magenta,
+`hooks` in green) so you can tell which process printed what. The
+`hooks-emitter` entry is a `tsc --watch` that keeps
+`hooks-emitter/dist/` fresh, so a Claude Code hook pointed at
+`dist/index.js` always runs current code with no manual rebuild. A
+`predev` step builds it once up front too. Stop everything with `Ctrl+C`.
 
 - Server: http://localhost:4000 (WebSocket at `ws://localhost:4000/ws`)
 - Frontend: http://localhost:5173
@@ -211,6 +220,8 @@ for those, use `instrumentation/` instead.
 | `hooks-emitter`   | `AGENTSVIZ_EVENTS_URL`       | `http://localhost:4000/events`                | Where the hook script POSTs events. |
 | `hooks-emitter`   | `AGENTSVIZ_API_KEY`         | `dev-local-token`                             | Bearer token sent on every POST. |
 | `hooks-emitter`   | `AGENTSVIZ_TEAM`             | *(basename of the session's `cwd`)*           | Overrides the derived `team` field. |
+| `hooks-emitter`   | `AGENTSVIZ_DEBUG`           | *(unset)*                                     | When set, a failed delivery (401, refused, timeout, non-2xx) is appended to a log **file** — never stderr, so it can't surface as Claude Code hook noise. Default off; behaviour is otherwise unchanged. |
+| `hooks-emitter`   | `AGENTSVIZ_DEBUG_LOG`      | `hooks-emitter/.agentsviz-emitter.log`        | Overrides the `AGENTSVIZ_DEBUG` log file path. |
 
 ## Authentication
 
@@ -309,10 +320,22 @@ reaped). Tune `AGENT_STALE_TIMEOUT_MS`/`AGENT_STALE_CHECK_INTERVAL_MS`
   `hooks-emitter/dist/index.js`. The hook script never errors or blocks
   the session (by design — see `hooks-emitter/README.md`), so a
   misconfigured path or URL fails silently from the agent's side too.
+  To find out *why* delivery is failing: run
+  `node hooks-emitter/dist/index.js --check` (POSTs one synthetic event
+  and prints the HTTP status), or set `AGENTSVIZ_DEBUG=1` in the hook's
+  environment to have failures appended to
+  `hooks-emitter/.agentsviz-emitter.log`.
+- **Short-lived agents/sub-agents don't seem to reach the Graph tab.**
+  They do — the Graph tab is a live view that keeps a stopped top-level
+  agent for ~60s (dimmed) then drops it, and keeps sub-agents
+  indefinitely. If you looked a little too late, scrub the timeline
+  scrubber back, or open the Teams tab, which never drops anything. The
+  empty-state message reports how many runs have aged out.
 - **`npm run dev` at the root doesn't do anything.** Make sure you ran
-  `npm install` at the repo root first (installs `concurrently`), and
-  that `server/` and `frontend/` each have their own `node_modules`
-  installed too.
+  `npm install` at the repo root first — its `postinstall` runs
+  `npm run setup`, which installs and builds every package (`server`,
+  `frontend`, `hooks-emitter`, `instrumentation`). If that was skipped,
+  run `npm run setup` by hand.
 
 ## Validating the full pipeline
 

@@ -56,15 +56,17 @@ export function GraphTab() {
   // agentId) even after the top-level agent that spawned it has itself
   // faded out of the filtered `agentList` below.
   const knownAgentIds = useMemo(() => new Set(Object.keys(agents)), [agents])
-  // The Graph tab is a *live* view: it defaults to showing only active
-  // agents, removing a just-stopped one promptly (a brief, barely
-  // perceptible fade — see FADE_MS in graph/fade.ts, shortened from the
-  // original 5s per issue #45) rather than letting every agent that's ever
-  // run accumulate on screen forever (issue #39). Logs/Teams are
-  // unaffected — they still read straight from `agents`. The fade timer
-  // only makes sense in live mode: a historical snapshot is already "as
-  // of" the scrubbed instant, so history mode shows every agent in it at
-  // full opacity instead (see GraphCanvas's `historyMode`).
+  // The Graph tab is a *live* view: it shows running agents plus any that
+  // stopped within the last GRACE_MS (dimmed — see graph/fade.ts), so a
+  // short-lived run (a Claude Code sub-agent, a brief helper) is still
+  // caught by someone glancing at the tab rather than vanishing ~250ms
+  // after it stops (issue #67). Sub-agents never get removed at all
+  // (#49). Older stopped agents don't accumulate here forever (#39/#45) —
+  // scrub the timeline or open Teams for those. Logs/Teams read straight
+  // from `agents` and are unaffected. The grace timer only makes sense in
+  // live mode: a historical snapshot is already "as of" the scrubbed
+  // instant, so history mode shows every agent in it at full opacity
+  // instead (see GraphCanvas's `historyMode`).
   const { isRemoved } = useGraphFadeOut(liveAllAgents)
 
   const allAgents = isHistory && historicalSnapshot ? Object.values(historicalSnapshot.agents) : liveAllAgents
@@ -96,6 +98,12 @@ export function GraphTab() {
 
   const running = agentList.filter((a) => a.status === 'running').length
 
+  // Stopped agents that have already aged out of the live view's grace
+  // window (see graph/fade.ts) — i.e. runs that happened but are no longer
+  // drawn. Surfaced in the live empty-state so a user who looked a moment
+  // too late knows a run happened and where to find it.
+  const agedOutRuns = liveAllAgents.filter((a) => a.status === 'stopped' && isRemoved(a.agentId)).length
+
   // A timeline is worth showing as soon as *any* event has ever been
   // recorded this session, even if the live view currently has nothing to
   // show (e.g. every agent has fully faded out per #39) — the user may
@@ -123,7 +131,9 @@ export function GraphTab() {
         <p className="empty-state">
           {isHistory
             ? 'No agents were active at this point in time.'
-            : 'No active agents right now — stopped agents are removed from this view promptly. Scrub back on the timeline above to see past activity.'}
+            : agedOutRuns > 0
+              ? `No active agents right now. ${agedOutRuns} agent${agedOutRuns === 1 ? '' : 's'} ran earlier this session — scrub back on the timeline above, or open the Teams tab, to see them.`
+              : 'No active agents right now. Recently-stopped agents linger here briefly; scrub back on the timeline above, or open the Teams tab, to see past activity.'}
         </p>
       ) : (
         <>

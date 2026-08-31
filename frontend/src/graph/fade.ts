@@ -1,39 +1,34 @@
 /**
- * Fade-out-and-remove timing for stopped agents (issue #39), reimplemented
- * for the canvas render loop (issue #40), then shortened to near-instant
- * removal per issue #45 — the original 5s window kept stale/stopped agents
- * cluttering a "live" view for longer than the dashboard's goal justifies.
- * `FADE_MS` is now just long enough (a couple hundred ms) to avoid a jarring
- * pop when a node disappears, not a real "linger" window.
+ * Fade-out-and-remove timing for stopped agents in the *live* Graph view
+ * (issues #39, #40, #45, #49, #67).
  *
- * The original DOM implementation (`useGraphFadeOut` in the pre-#40
- * Graph.tsx) scheduled a `setTimeout` per agent and drove a CSS
- * `transition: opacity` from a captured "remaining ms" value. A canvas
- * render loop already recomputes visuals every frame, so the equivalent
- * here is a pure function of wall-clock time: alpha ramps linearly from 1
- * to 0 over `FADE_MS`, anchored to `stoppedAt` — not to whenever this
- * function first happened to run — so an agent that was already stopped
- * before the tab loaded (e.g. present in the initial snapshot) still
- * disappears ~`FADE_MS` after it *actually* stopped, and one mid-fade when
- * the tab is switched back to Graph resumes exactly where the clock says it
- * should be, not from a fresh window.
+ * History: #39 introduced a 5s linger for stopped agents; #45 cut that to
+ * near-instant removal (`FADE_MS` ~250ms) because a 5s linger of *every*
+ * agent that ever ran cluttered a "live" view. That swung too far the
+ * other way for the common case in #67: a Claude Code sub-agent (or any
+ * short helper run) that lives 3–25s and then stops was gone from the
+ * Graph tab ~250ms later, so a user who wasn't already staring at the
+ * canvas at exactly the right moment saw nothing — the run only survived
+ * in Teams and the timeline scrubber.
  *
- * A running agent (including one that goes back to running after a
- * presumed/explicit stop — a reconnect/resume, handled defensively as in
- * the original hook) is always fully opaque and never removed.
+ * The balance now:
+ *   - A stopped **top-level** agent dims to `DIMMED_ALPHA` over `DIM_MS`
+ *     (a quick, non-jarring de-emphasis so it's visually clear it's done),
+ *     then lingers at that reduced opacity until `GRACE_MS` after it
+ *     actually stopped, then is removed. `GRACE_MS` is long enough (60s)
+ *     that a brief run is reliably caught by someone glancing at the tab,
+ *     but short enough that the live view doesn't accumulate history.
+ *   - A **sub-agent** (structural check below) still never dims or gets
+ *     removed at all (#49) — the delegation tree is the whole point of a
+ *     multi-agent view, and losing a child node right after it stops makes
+ *     the tree impossible to read.
+ *   - A **running** agent (including one that goes back to running after a
+ *     presumed/explicit stop) is always fully opaque and never removed.
  *
- * Sub-agents never fade or get removed at all (issue #49) — a sub-agent is
- * the interesting part of a multi-agent session, and losing it from view
- * after a short-lived stop makes it impossible to see the full delegation
- * tree of what happened. "Sub-agent" is determined structurally, not by a
- * hardcoded string check on `caller`: an agent is a sub-agent iff its
- * `caller` matches another agentId that has been seen in this session (see
- * `isSubAgent` below) — this covers both hooks-emitter sub-agents (#30,
- * where `caller` is the owning session's agentId) and manually-instrumented
- * setups where one agent's `caller` names a sibling agent's id. Its node
- * still needs to reflect status changes visually, which happens separately
- * via `agentColors()` — `computeFade` only ever gates *removal/fading*, not
- * the status color itself.
+ * Everything is a pure function of wall-clock time anchored to
+ * `stoppedAt`, not to when this function first ran — so an agent that
+ * stopped before the tab loaded, or mid-linger when the tab is switched
+ * back to Graph, resumes exactly where the clock says it should be.
  *
  * History mode (issue #43) bypasses this entirely — see `GraphCanvas.tsx`'s
  * `historyMode` prop, which renders every agent in a reconstructed snapshot
@@ -42,7 +37,17 @@
 
 import type { AgentState } from '../types'
 
-export const FADE_MS = 250
+/** How long the dim-down ramp takes once an agent stops. */
+export const DIM_MS = 400
+/** Opacity a stopped top-level agent holds at during the grace window. */
+export const DIMMED_ALPHA = 0.4
+/**
+ * How long after `stoppedAt` a stopped top-level agent stays on the live
+ * Graph before it's removed (#67). Drives both the per-frame alpha in
+ * `computeFade` and the removal re-render timer in `useGraphFadeOut`, so
+ * the canvas and the tab's header/empty-state stay in lockstep.
+ */
+export const GRACE_MS = 60_000
 
 export interface FadeState {
   /** 1 = fully visible, 0 = fully faded. */
@@ -75,9 +80,13 @@ export function computeFade(
 
   const stoppedAtMs = agent.stoppedAt ? Date.parse(agent.stoppedAt) : now
   const anchor = Number.isNaN(stoppedAtMs) ? now : stoppedAtMs
-  const elapsed = now - anchor
-  const alpha = Math.min(1, Math.max(0, 1 - elapsed / FADE_MS))
-  return { alpha, removed: elapsed >= FADE_MS }
+  const elapsed = Math.max(0, now - anchor)
+
+  // Quick ramp from full opacity down to DIMMED_ALPHA, then hold there for
+  // the rest of the grace window.
+  const dimProgress = Math.min(1, elapsed / DIM_MS)
+  const alpha = 1 - dimProgress * (1 - DIMMED_ALPHA)
+  return { alpha, removed: elapsed >= GRACE_MS }
 }
 
 const EMPTY_ID_SET: ReadonlySet<string> = new Set()

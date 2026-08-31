@@ -79,10 +79,16 @@ same `team` — grouping them together in the Teams tab.
 
 ## Install / build
 
+The repo-root `npm install` already installs and builds this package (via
+its `postinstall`), and the root `npm run dev` runs `npm run dev` here —
+a `tsc --watch` that keeps `dist/` current while you work. To do it
+directly:
+
 ```bash
 cd hooks-emitter
 npm install
-npm run build   # compiles src/ -> dist/
+npm run build   # compiles src/ -> dist/ (one-shot)
+npm run dev     # or: tsc --watch, rebuilding dist/ on every change
 npm test        # builds, then runs the payload-mapping unit tests
 ```
 
@@ -160,6 +166,33 @@ environment as `AGENTSVIZ_EVENTS_URL`) to match a server configured with
 ```bash
 export AGENTSVIZ_API_KEY=dev-local-token
 ```
+
+## Diagnosing a silent failure (issue #67)
+
+By design this script swallows every delivery failure — a 401, a refused
+connection, a timeout, a non-2xx response — so it can never surface as
+Claude Code hook noise or block a tool call. That also means a
+misconfigured setup looks identical to "working": nothing shows up in the
+dashboard and there's no error anywhere. Two opt-in ways to see what's
+happening, neither of which changes the default behaviour:
+
+- **`--check`** — `node dist/index.js --check` POSTs one synthetic `log`
+  event to the configured server *in the foreground* and prints the
+  result (`OK — … HTTP 202` or e.g. `… rejected: HTTP 401 — bad or
+  missing bearer token …`). Exits non-zero on failure. Unlike a hook
+  invocation this one deliberately talks to stdout.
+- **`AGENTSVIZ_DEBUG=1`** — set in the environment Claude Code runs hooks
+  in. Every failed delivery is then appended to a log **file**
+  (`hooks-emitter/.agentsviz-emitter.log`, override with
+  `AGENTSVIZ_DEBUG_LOG`), with the HTTP status or error code. Still never
+  writes to stderr, never throws. Unset it and behaviour is exactly as
+  before.
+
+A stale `dist/` is the most common cause: if it was built before the
+server started requiring a bearer token (issue #52), `send.js` has no
+`Authorization` header and every POST 401s. Rebuild with `npm run build`
+(or run the repo-root `npm run dev`, whose `hooks` process keeps `dist/`
+current).
 
 ## Safety guarantees
 
