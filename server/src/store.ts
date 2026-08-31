@@ -68,6 +68,20 @@ function toolCallKey(agentId: string, tool: string, caller?: string): string {
   return `${agentId}::${caller ?? ""}::${tool}`;
 }
 
+/**
+ * A `caller` worth recording on an *agent* record: a non-empty id that
+ * names some *other* agent. `tool_call_*` (and `agent_stop`, post-#69)
+ * events on a top-level agent carry `caller === agentId` as a
+ * self-reference; storing that on the agent record would make the agent
+ * look like its own sub-agent to consumers that treat "has a caller" as
+ * "is a sub-agent" (e.g. the frontend Graph's grace-window exemption).
+ * Returns `undefined` for the self-reference / empty cases so callers can
+ * `?? existing?.caller`.
+ */
+function meaningfulCaller(agentId: string, caller: string | undefined): string | undefined {
+  return caller && caller !== agentId ? caller : undefined;
+}
+
 /** Renders a millisecond duration for the reaped-agent stopMessage below. */
 function formatDuration(ms: number): string {
   if (ms < 60000) {
@@ -146,7 +160,14 @@ export class StateStore {
       agentId: event.agentId,
       status: "stopped",
       team: event.team ?? existing?.team,
-      caller: existing?.caller,
+      // Prefer an already-known caller, but fall back to the one on the
+      // event itself. A Claude Code sub-agent never emits `agent_start`
+      // (no SessionStart hook fires for it), so `agent_stop` is often the
+      // first — and only — event that ever creates its record; without
+      // this fallback the record lands with no `caller` and the frontend
+      // can't tell it apart from a top-level agent on the snapshot path
+      // (#69).
+      caller: existing?.caller ?? meaningfulCaller(event.agentId, event.caller),
       startedAt: existing?.startedAt,
       stoppedAt: event.timestamp,
       stopStatus: event.status,
@@ -160,7 +181,41 @@ export class StateStore {
     this.lastActivityAt.set(event.agentId, Number.isNaN(at) ? Date.now() : at);
   }
 
+  /**
+   * A `tool_call_*` event is the only evidence we get that a Claude Code
+   * sub-agent exists (it never emits `agent_start`), and it's the only
+   * event that carries the sub-agent -> parent link via `caller`. Fold
+   * that link (and `team`) onto the agent record here so it survives into
+   * `getSnapshot()`; otherwise a reloaded/late-opened dashboard sees the
+   * sub-agent with no `caller` and removes it after the Graph grace
+   * window, exactly what #67/#68 were meant to prevent (#69). Never
+   * downgrades a `running` agent (a tool call mid-run isn't a stop) and
+   * never overwrites an already-known `caller`/`team`.
+   */
+  private noteAgentFromToolCall(
+    event: Extract<AgentEvent, { type: "tool_call_start" | "tool_call_end" }>,
+  ): void {
+    const existing = this.agents.get(event.agentId);
+    const caller = existing?.caller ?? meaningfulCaller(event.agentId, event.caller);
+    const team = existing?.team ?? event.team;
+    if (existing) {
+      // Only touch the fields this event can contribute; leave status and
+      // stop bookkeeping alone.
+      if (caller !== existing.caller || team !== existing.team) {
+        this.agents.set(event.agentId, { ...existing, caller, team });
+      }
+      return;
+    }
+    this.agents.set(event.agentId, {
+      agentId: event.agentId,
+      status: "running",
+      caller,
+      team,
+    });
+  }
+
   private applyToolCallStart(event: Extract<AgentEvent, { type: "tool_call_start" }>): void {
+    this.noteAgentFromToolCall(event);
     const key = toolCallKey(event.agentId, event.tool, event.caller);
     const callId = `call-${this.nextCallSeq++}`;
     this.toolCalls.set(callId, {
@@ -177,6 +232,7 @@ export class StateStore {
   }
 
   private applyToolCallEnd(event: Extract<AgentEvent, { type: "tool_call_end" }>): void {
+    this.noteAgentFromToolCall(event);
     const key = toolCallKey(event.agentId, event.tool, event.caller);
     const callId = this.pendingByKey.get(key);
     const existing = callId ? this.toolCalls.get(callId) : undefined;
