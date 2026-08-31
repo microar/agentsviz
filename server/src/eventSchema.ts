@@ -43,6 +43,11 @@ export type AgentEvent =
       timestamp: string;
       agentId: string;
       team?: string;
+      // Optional: the parent/owning agentId. Carried by `hooks-emitter`'s
+      // `SubagentStop` mapping so a Claude Code sub-agent's record gets a
+      // `caller` even though it never emits `agent_start` (#69). Validated
+      // by the shared envelope check (non-empty string when present).
+      caller?: string;
       status: "success" | "error";
       message?: string;
     }

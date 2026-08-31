@@ -369,6 +369,13 @@ async function main() {
   assert(!!subState, "sub-agent appears in the final snapshot (via SubagentStop, no separate SessionStart hook exists for sub-agents)");
   assert(subState?.status === "stopped", `sub-agent final status is "stopped" (got ${subState?.status})`);
   assert(subState?.stopStatus === "success", "sub-agent stop status is success");
+  // #69: the sub-agent's snapshot record must carry `caller` pointing at
+  // the parent — otherwise a reloaded dashboard can't tell it apart from a
+  // top-level agent and drops it from the Graph after the grace window.
+  assert(
+    subState?.caller === expectedAgentId,
+    `sub-agent snapshot record carries caller = parent agentId (got ${subState?.caller}, want ${expectedAgentId})`,
+  );
 
   const taskCall = finalSnapshot.toolCalls.find((c) => c.agentId === expectedAgentId && c.tool === "Task");
   assert(!!taskCall, "top-level Task tool call is recorded");

@@ -84,7 +84,7 @@ type).
 | `timestamp` | `string` (ISO 8601)  | Always | UTC timestamp of when the event occurred, e.g. `2026-08-24T14:32:01.123Z`. Millisecond precision preferred. |
 | `agentId`   | `string`             | Always | Stable unique identifier for the agent instance that owns this event (e.g. a UUID or `<agent-name>-<run-id>`). Every event belongs to exactly one agent. |
 | `team`      | `string`             | Optional | Name/identifier of the team or crew the agent belongs to, for multi-agent setups. Omitted for single-agent runs where the concept doesn't apply. |
-| `caller`    | `string`             | Optional | The `agentId` (or other identifier, e.g. `"user"`) that triggered this event — used on tool call events to record who initiated the call, and optionally on `agent_start` to record which agent/process spawned this one. Omitted when there is no meaningful caller (e.g. a top-level agent started by a human). |
+| `caller`    | `string`             | Optional | The `agentId` (or other identifier, e.g. `"user"`) that triggered this event — used on tool call events to record who initiated the call, and optionally on `agent_start`/`agent_stop` to record which agent/process spawned this one (e.g. a Claude Code sub-agent, which never emits `agent_start`, carries it on `agent_stop`). Omitted when there is no meaningful caller (e.g. a top-level agent started by a human). |
 | `tool`      | `string`             | Tool call events only | Name of the tool being invoked (e.g. `"web_search"`, `"read_file"`). Present on `tool_call_start` and `tool_call_end`; omitted otherwise. |
 | `input`     | `object`             | `tool_call_start` only | The arguments/parameters passed to the tool, as a JSON object. Omitted on all other event types. |
 | `result`    | `any`                | `tool_call_end` only | The tool's return value on success. May be a string, object, array, or number depending on the tool. Omitted when the call errored (see `status`/`message` instead) or on event types other than `tool_call_end`. |
@@ -129,7 +129,7 @@ Emitted once when an agent instance finishes running, whether it
 completed successfully, was cancelled, or failed.
 
 **Fields used:** `type`, `timestamp`, `agentId`, `team` (optional),
-`status`, `message` (optional).
+`caller` (optional), `status`, `message` (optional).
 
 ```json
 {
@@ -141,6 +141,14 @@ completed successfully, was cancelled, or failed.
   "message": "Completed task with 3 sources gathered"
 }
 ```
+
+`caller` is optional here and is normally omitted for a top-level agent.
+It matters for runtimes where a sub-agent never emits its own
+`agent_start` — notably Claude Code sub-agents, which have no
+`SessionStart` hook — so `agent_stop` (mapped from `SubagentStop`) is the
+event that carries the sub-agent → parent link. Consumers that build a
+delegation tree from `caller` should read it off `agent_stop` too, not
+just `agent_start` / tool call events.
 
 Error case:
 
@@ -358,7 +366,7 @@ emitted. See [`/SECURITY.md`](../SECURITY.md).
 | `timestamp` | required | required | required | required | required | required |
 | `agentId`   | required | required | required | required | required | required |
 | `team`      | optional | optional | optional | optional | optional | optional |
-| `caller`    | optional | – | required | required | – | optional |
+| `caller`    | optional | optional | required | required | – | optional |
 | `tool`      | – | – | required | required | – | – |
 | `input`     | – | – | required | – | – | – |
 | `result`    | – | – | – | on success | – | – |

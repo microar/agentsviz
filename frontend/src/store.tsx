@@ -14,9 +14,13 @@
  *  - `agent_start` creates/replaces an agent entry marked "running".
  *  - `agent_stop` marks the existing agent "stopped" in place (agents are
  *    never removed from the store).
- *  - `tool_call_start` appends a new "pending" tool call.
+ *  - `tool_call_start` appends a new "pending" tool call, and also folds
+ *    the call's `caller`/`team` onto the agent record (a Claude Code
+ *    sub-agent is only ever seen via its tool calls + `agent_stop`, never
+ *    an `agent_start`) so its parent link survives into the snapshot (#69).
  *  - `tool_call_end` updates the matching pending call (same agentId +
- *    tool + caller) in place rather than appending a duplicate.
+ *    tool + caller) in place rather than appending a duplicate, and folds
+ *    `caller`/`team` onto the agent record the same way.
  *  - `log` / `error` are appended to a capped rolling log list.
  *
  * The snapshot message is handled separately from live events: the server
@@ -111,6 +115,44 @@ function agentFromStartEvent(event: LifecycleEvent): AgentState {
   }
 }
 
+/**
+ * A `caller` worth recording on an *agent* record: a non-empty id naming
+ * some *other* agent. `tool_call_*` / `agent_stop` events on a top-level
+ * agent carry `caller === agentId` as a self-reference; storing that would
+ * make the agent look like its own sub-agent to `isSubAgent` (graph/fade.ts)
+ * and exempt it from grace-window removal. Mirrors `meaningfulCaller` in
+ * `server/src/store.ts`.
+ */
+function meaningfulCaller(agentId: string, caller: string | undefined): string | undefined {
+  return caller && caller !== agentId ? caller : undefined
+}
+
+/**
+ * Folds the sub-agent -> parent link (`caller`) and `team` off a
+ * `tool_call_*` event onto the agent record, creating a minimal "running"
+ * record if none exists yet. A Claude Code sub-agent never emits
+ * `agent_start`, so without this its record (built later by `agent_stop`)
+ * would have no `caller` and the Graph would drop it after the grace
+ * window (#69). Never overwrites a known `caller`/`team` and never changes
+ * `status`. Mirrors `StateStore.noteAgentFromToolCall` on the server.
+ */
+function noteAgentFromToolCall(
+  agents: Record<string, AgentState>,
+  event: LifecycleEvent,
+): Record<string, AgentState> {
+  const existing = agents[event.agentId]
+  const caller = existing?.caller ?? meaningfulCaller(event.agentId, event.caller)
+  const team = existing?.team ?? event.team
+  if (existing) {
+    if (caller === existing.caller && team === existing.team) return agents
+    return { ...agents, [event.agentId]: { ...existing, caller, team } }
+  }
+  return {
+    ...agents,
+    [event.agentId]: { agentId: event.agentId, status: 'running', caller, team },
+  }
+}
+
 function applyAgentStart(agents: Record<string, AgentState>, event: LifecycleEvent): Record<string, AgentState> {
   return { ...agents, [event.agentId]: agentFromStartEvent(event) }
 }
@@ -124,6 +166,11 @@ function applyAgentStop(agents: Record<string, AgentState>, event: LifecycleEven
     ...agents,
     [event.agentId]: {
       ...next,
+      // A Claude Code sub-agent has no `agent_start`, so this `agent_stop`
+      // (mapped from SubagentStop, which carries `caller` post-#69) is
+      // what puts the parent link on its record. Keep an already-known
+      // caller; otherwise take the event's, ignoring a self-reference.
+      caller: existing?.caller ?? meaningfulCaller(event.agentId, event.caller),
       status: 'stopped',
       stoppedAt: event.timestamp,
       stopStatus: event.status,
@@ -224,9 +271,17 @@ export function applyEvent(state: EventStoreState, event: LifecycleEvent): Event
     case 'agent_stop':
       return { ...state, agents: applyAgentStop(state.agents, event) }
     case 'tool_call_start':
-      return { ...state, toolCalls: applyToolCallStart(state.toolCalls, event) }
+      return {
+        ...state,
+        agents: noteAgentFromToolCall(state.agents, event),
+        toolCalls: applyToolCallStart(state.toolCalls, event),
+      }
     case 'tool_call_end':
-      return { ...state, toolCalls: applyToolCallEnd(state.toolCalls, event) }
+      return {
+        ...state,
+        agents: noteAgentFromToolCall(state.agents, event),
+        toolCalls: applyToolCallEnd(state.toolCalls, event),
+      }
     case 'log':
     case 'error':
       return { ...state, logs: applyLogOrError(state.logs, event) }

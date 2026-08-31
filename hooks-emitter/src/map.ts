@@ -234,6 +234,12 @@ export function mapHookPayload(payload: HookPayload, now: () => string = () => n
         timestamp,
         agentId,
         ...(team ? { team } : {}),
+        // A sub-agent never fires SessionStart, so this SubagentStop is
+        // usually the first event that creates its record on the server.
+        // Carry the parent link (same `caller` PreToolUse/PostToolUse use)
+        // so the sub-agent's snapshot record has a `caller` and the Graph
+        // keeps rendering it after a reload (#69).
+        caller: deriveCaller(payload),
         status: "success",
         message: "Subagent stopped",
       };
