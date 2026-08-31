@@ -172,6 +172,11 @@ assert.equal(
   // Sub-agent agentId is synthesized as `${session_id}-${agent_id}` so it
   // is distinct from the parent's own agentId (see #30 / map.ts header).
   assert.equal(event.agentId, "sess-1-sub-1");
+  // SubagentStop carries `caller` = parent session_id (#69): it is usually
+  // the first event the server sees for a sub-agent (no SessionStart hook
+  // fires for one), so it must carry the parent link or the sub-agent's
+  // snapshot record lands with no `caller`.
+  assert.equal(event.caller, "sess-1", "SubagentStop links the sub-agent back to its parent");
 }
 
 // --- team/caller derivation for sub-agent hierarchies (#30) --------------

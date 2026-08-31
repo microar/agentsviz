@@ -96,6 +96,10 @@ export type AgentEvent =
       timestamp: string;
       agentId: string;
       team?: string;
+      // Parent/owning agentId. Set by the SubagentStop mapping so a Claude
+      // Code sub-agent (which never emits agent_start) still carries its
+      // parent link — see docs/event-schema.md and map.ts (#69).
+      caller?: string;
       status: Status;
       message?: string;
     }
