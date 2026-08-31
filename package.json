@@ -4,7 +4,10 @@
   "version": "0.0.0",
   "description": "Root dev tooling for AgentsViz — see README.md for the full project overview.",
   "scripts": {
-    "dev": "concurrently -n server,frontend -c blue,magenta \"npm:dev --prefix server\" \"npm:dev --prefix frontend\""
+    "setup": "npm install --prefix server && npm install --prefix frontend && npm install --prefix hooks-emitter && npm install --prefix instrumentation && npm run build --prefix hooks-emitter && npm run build --prefix instrumentation",
+    "postinstall": "npm run setup",
+    "predev": "npm run build --prefix hooks-emitter",
+    "dev": "concurrently -n server,frontend,hooks -c blue,magenta,green \"npm:dev --prefix server\" \"npm:dev --prefix frontend\" \"npm:dev --prefix hooks-emitter\""
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

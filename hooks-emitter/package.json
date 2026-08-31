@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "tsc -b",
+    "dev": "tsc -b --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node test/map.test.mjs"
   },
