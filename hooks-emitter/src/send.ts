@@ -12,13 +12,15 @@
  * (bad JSON, connection refused, timeout, non-2xx, 401) is swallowed
  * silently — this process must never write to stderr in a way that would
  * surface as hook noise, and must never throw.
+ *
+ * The one addition (issue #67): when `$AGENTSVIZ_DEBUG` is set, a failed
+ * delivery is appended to a log FILE (never stderr) via `debugLog`, so a
+ * user who set nothing up but sees an empty dashboard has a way to find
+ * out their events are being rejected. With the env var unset this is a
+ * no-op and behaviour is exactly as before.
  */
 
-const DEFAULT_EVENTS_URL = "http://localhost:4000/events";
-// Shared local-dev token — the event server accepts only this when no
-// AGENTSVIZ_API_KEYS is configured. Override via $AGENTSVIZ_API_KEY.
-const DEFAULT_API_KEY = "dev-local-token";
-const TIMEOUT_MS = 3000;
+import { describeFailure, debugLog, postEvent } from "./emit.js";
 
 async function main(): Promise<void> {
   const raw = process.argv[2];
@@ -31,26 +33,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const url = process.env.AGENTSVIZ_EVENTS_URL || DEFAULT_EVENTS_URL;
-  const apiKey = process.env.AGENTSVIZ_API_KEY || DEFAULT_API_KEY;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify(event),
-      signal: controller.signal,
-    });
-  } catch {
-    // Connection refused, DNS failure, timeout abort, etc. — swallow.
-  } finally {
-    clearTimeout(timer);
-  }
+  const outcome = await postEvent(event);
+  const failure = describeFailure(outcome);
+  if (failure) debugLog(failure);
 }
 
 main()

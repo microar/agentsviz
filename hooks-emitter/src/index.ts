@@ -17,12 +17,20 @@
  * Flow: read the hook's JSON payload from stdin -> map it to an
  * AgentsViz event (map.ts) -> hand the event off to a detached sender
  * process -> exit 0 immediately without waiting for the POST.
+ *
+ * Self-check (issue #67): run `node dist/index.js --check` to POST one
+ * synthetic event to the configured server *in the foreground* and print
+ * the HTTP status to stdout. This is the deliberate opposite of the hook
+ * path — it's a manual diagnostic, so it does talk to stdout and exits
+ * non-zero on failure. The hook path (payload on stdin, no argv) is
+ * unchanged and stays silent.
  */
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { mapHookPayload, parseHookPayload } from "./map.js";
+import { describeFailure, postEvent, resolveEventsUrl } from "./emit.js";
 
 async function readStdin(): Promise<string> {
   return new Promise((resolve) => {
@@ -53,6 +61,29 @@ function dispatchToSender(eventJson: string): void {
   child.unref();
 }
 
+/**
+ * `--check`: POST one synthetic `log` event and report the outcome. A
+ * `log` event needs only `agentId`/`timestamp`/`message` and changes no
+ * agent/tool-call state server-side, so it's a safe probe. Returns the
+ * process exit code (0 = delivered and accepted).
+ */
+async function runCheck(): Promise<number> {
+  const url = resolveEventsUrl();
+  const outcome = await postEvent({
+    type: "log",
+    timestamp: new Date().toISOString(),
+    agentId: "agentsviz-hooks-emitter-selfcheck",
+    message: "hooks-emitter --check probe",
+  });
+  const failure = describeFailure(outcome);
+  if (failure) {
+    console.log(failure);
+    return 1;
+  }
+  console.log(`OK — ${url} accepted the probe event (HTTP ${outcome.status}).`);
+  return 0;
+}
+
 async function run(): Promise<void> {
   const raw = await readStdin();
   if (!raw.trim()) return;
@@ -73,10 +104,19 @@ async function run(): Promise<void> {
   dispatchToSender(JSON.stringify(event));
 }
 
-run()
-  .catch(() => {
-    /* swallow — this script must never throw */
-  })
-  .finally(() => {
-    process.exit(0);
-  });
+if (process.argv[2] === "--check") {
+  runCheck()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.log(`--check crashed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    });
+} else {
+  run()
+    .catch(() => {
+      /* swallow — this script must never throw */
+    })
+    .finally(() => {
+      process.exit(0);
+    });
+}
