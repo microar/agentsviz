@@ -93,6 +93,57 @@ export const TOOL_SPACING = 46
 export const AGENT_RADIUS = 20
 export const TOOL_SIZE = 22
 
+/**
+ * Orders an agent id list so each agent is immediately followed by the
+ * sub-agents it spawned (depth-first), with top-level agents kept in their
+ * original relative order (issue #71).
+ *
+ * This is the "minimal layout support" for parent->child edges: `useStableLayout`
+ * hands out phyllotaxis slots in first-seen order and never reassigns one,
+ * so feeding it a lineage-ordered id list means a parent and the children
+ * it spawns in the same burst land on contiguous spiral slots — keeping the
+ * parent->child lines short instead of crisscrossing the whole agent
+ * cluster. It only affects the slot handed to a *brand-new* id, so existing
+ * nodes never move, and the positions are still pure phyllotaxis points, so
+ * the "no two same-cluster nodes overlap" invariant (verify-layout.mjs) is
+ * untouched. A self-referential `caller` (caller === agentId) or a `caller`
+ * naming an unknown agent is treated as top-level.
+ */
+export function orderByLineage(agents: readonly { agentId: string; caller?: string }[]): string[] {
+  const ids = new Set(agents.map((a) => a.agentId))
+  const childrenByParent = new Map<string, string[]>()
+  const roots: string[] = []
+  for (const agent of agents) {
+    const { agentId, caller } = agent
+    if (caller && caller !== agentId && ids.has(caller)) {
+      const siblings = childrenByParent.get(caller)
+      if (siblings) siblings.push(agentId)
+      else childrenByParent.set(caller, [agentId])
+    } else {
+      roots.push(agentId)
+    }
+  }
+
+  const ordered: string[] = []
+  const seen = new Set<string>()
+  const visit = (id: string) => {
+    if (seen.has(id)) return
+    seen.add(id)
+    ordered.push(id)
+    for (const child of childrenByParent.get(id) ?? []) visit(child)
+  }
+  for (const root of roots) visit(root)
+  // Anything unreachable from a root (e.g. a caller cycle) — keep it, in
+  // original order, so no agent is ever dropped from the layout.
+  for (const agent of agents) {
+    if (!seen.has(agent.agentId)) {
+      seen.add(agent.agentId)
+      ordered.push(agent.agentId)
+    }
+  }
+  return ordered
+}
+
 export function agentLabel(agentId: string): string {
   return agentId.length > 14 ? `${agentId.slice(0, 13)}…` : agentId
 }

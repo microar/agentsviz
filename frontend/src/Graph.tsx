@@ -153,6 +153,7 @@ export function GraphTab() {
             <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stale" /> presumed stopped</span>
             <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--pending" /> tool call active</span>
             <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--settled" /> tool call settled</span>
+            <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--subagent" /> subagent link</span>
           </div>
           <p className="graph-hint">Drag to pan, scroll/pinch to zoom, click a node to inspect.</p>
 
