@@ -712,8 +712,10 @@
 
 .team-agent {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  column-gap: 0.5rem;
+  row-gap: 0.15rem;
   padding: 0.3rem 0;
   font-size: 0.85rem;
   border-bottom: 1px solid rgba(127, 127, 127, 0.1);
@@ -751,9 +753,22 @@
   background: #d97706;
 }
 
+/* The id is the flexible element in the row: it grows into the space left
+   by the fixed dot/status and truncates with an ellipsis, rather than
+   being squeezed to its 1-char min-content width (which, with the old
+   `overflow-wrap: anywhere`, rendered the id vertically once the `via
+   <caller>` span from #70/#71 started appearing on nearly every row —
+   issue #75). Full id stays available via the `title` attribute. */
 .team-agent-id {
+  /* `flex-basis: 0` (not `auto`) so the id sizes from the space left on
+     the row, not from its own long content — that keeps the dot and the
+     status badge on the same line instead of each wrapping to its own. */
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  overflow-wrap: anywhere;
 }
 
 .team-agent-status {
@@ -766,8 +781,20 @@
   color: var(--color-text-muted, #6b7280);
 }
 
+/* `via <caller>` (a long, unbreakable monospace id, now populated for
+   essentially every agent — #70/#71) drops onto its own full-width line
+   under the id and truncates there, so it can never force the row wider
+   than the card and push the id down to 1ch (issue #75). */
 .team-agent-caller {
-  flex-shrink: 0;
+  flex: 1 1 100%;
+  min-width: 0;
+  /* border-box so `padding-left` stays inside the `flex-basis: 100%` and
+     this line can never push the row wider than the card. */
+  box-sizing: border-box;
+  padding-left: 1.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.72rem;
   color: var(--color-text-muted, #6b7280);
 }
