@@ -21,6 +21,31 @@
   font-size: 1rem;
 }
 
+/* Header team/session filter (issue #73) */
+
+.dashboard-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.dashboard-filter-field {
+  font-size: 0.9rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.dashboard-filter-field select {
+  margin-left: 0.25rem;
+  font: inherit;
+  color: inherit;
+  background: rgba(127, 127, 127, 0.08);
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+}
+
 .tab-bar {
   display: flex;
   gap: 0.5rem;
