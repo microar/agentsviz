@@ -361,6 +361,27 @@
   box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.35);
 }
 
+/* Empty-state variant (issue #75): reuses `.graph-canvas-wrap`'s fixed
+   height so switching the header Team/Session filter to a scope with no
+   currently-visible agents keeps the Graph panel exactly the same size —
+   the "no agents" copy is just centered inside the same frame instead of
+   replacing the whole panel. */
+.graph-canvas-wrap--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+/* Inset lives on the inner text (not as padding on the wrap) so the wrap
+   keeps `.graph-canvas-wrap`'s exact `height: 60vh` box and the panel is
+   pixel-identical to its populated state (issue #75). */
+.graph-canvas-wrap--placeholder .empty-state {
+  margin: 0;
+  max-width: 40ch;
+  padding: 0 1.5rem;
+}
+
 .graph-canvas-el {
   display: block;
   width: 100%;

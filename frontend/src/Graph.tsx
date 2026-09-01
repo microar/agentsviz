@@ -151,46 +151,62 @@ export function GraphTab() {
         <Timeline earliestMs={earliestMs} latestMs={latestMs} scrubAtMs={scrubAtMs} onScrub={setScrubAtMs} />
       )}
 
+      {/*
+        Header stats/legend/hint stay mounted in every filter state (they
+        just show zeroed counts when nothing is visible), so toggling the
+        header Team/Session filter never changes the panel's height by
+        adding or removing this block — see issue #75.
+      */}
+      <ul className="stat-list graph-stats">
+        <li>
+          <strong>{agentList.length}</strong> agent{agentList.length === 1 ? '' : 's'} shown ({running} running)
+        </li>
+        <li>
+          <strong>{activeToolCalls.length}</strong> tool call{activeToolCalls.length === 1 ? '' : 's'} recorded
+        </li>
+      </ul>
+
+      <div className="graph-legend">
+        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--running" /> running</span>
+        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stopped" /> stopped</span>
+        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--error" /> error</span>
+        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stale" /> presumed stopped</span>
+        <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--pending" /> tool call active</span>
+        <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--settled" /> tool call settled</span>
+        <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--subagent" /> subagent link</span>
+      </div>
+      <p className="graph-hint">Drag to pan, scroll/pinch to zoom, click a node to inspect.</p>
+
       {agentList.length === 0 ? (
-        <p className="empty-state">
-          {isHistory
-            ? 'No agents were active at this point in time.'
-            : agedOutRuns > 0
-              ? `No active agents right now. ${agedOutRuns} agent${agedOutRuns === 1 ? '' : 's'} ran earlier this session — scrub back on the timeline above, or open the Teams tab, to see them.`
-              : 'No active agents right now. Recently-stopped agents linger here briefly; scrub back on the timeline above, or open the Teams tab, to see past activity.'}
-        </p>
+        // Same fixed-size frame as GraphCanvas's own `.graph-canvas-wrap`,
+        // so a filter selection with no currently-visible agents shows the
+        // "no agents" copy centered inside the panel instead of collapsing
+        // it to a single line of text (issue #75).
+        <div
+          className={`graph-canvas-wrap graph-canvas-wrap--placeholder${
+            isHistory ? ' graph-canvas-wrap--history' : ''
+          }`}
+        >
+          <p className="empty-state">
+            {isHistory
+              ? 'No agents were active at this point in time.'
+              : visibleIds
+                ? 'No agents match the current team/session filter.'
+                : agedOutRuns > 0
+                  ? `No active agents right now. ${agedOutRuns} agent${agedOutRuns === 1 ? '' : 's'} ran earlier this session — scrub back on the timeline above, or open the Teams tab, to see them.`
+                  : 'No active agents right now. Recently-stopped agents linger here briefly; scrub back on the timeline above, or open the Teams tab, to see past activity.'}
+          </p>
+        </div>
       ) : (
-        <>
-          <ul className="stat-list graph-stats">
-            <li>
-              <strong>{agentList.length}</strong> agent{agentList.length === 1 ? '' : 's'} shown ({running} running)
-            </li>
-            <li>
-              <strong>{activeToolCalls.length}</strong> tool call{activeToolCalls.length === 1 ? '' : 's'} recorded
-            </li>
-          </ul>
-
-          <div className="graph-legend">
-            <span className="graph-legend-item"><span className="graph-swatch graph-swatch--running" /> running</span>
-            <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stopped" /> stopped</span>
-            <span className="graph-legend-item"><span className="graph-swatch graph-swatch--error" /> error</span>
-            <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stale" /> presumed stopped</span>
-            <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--pending" /> tool call active</span>
-            <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--settled" /> tool call settled</span>
-            <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--subagent" /> subagent link</span>
-          </div>
-          <p className="graph-hint">Drag to pan, scroll/pinch to zoom, click a node to inspect.</p>
-
-          <GraphCanvas
-            allAgents={agentList}
-            toolNames={toolNames}
-            edges={edges}
-            selectedAgentId={selectedAgentId}
-            onSelectAgent={setSelectedAgentId}
-            knownAgentIds={knownAgentIds}
-            historyMode={isHistory}
-          />
-        </>
+        <GraphCanvas
+          allAgents={agentList}
+          toolNames={toolNames}
+          edges={edges}
+          selectedAgentId={selectedAgentId}
+          onSelectAgent={setSelectedAgentId}
+          knownAgentIds={knownAgentIds}
+          historyMode={isHistory}
+        />
       )}
 
       <AgentDrawer
