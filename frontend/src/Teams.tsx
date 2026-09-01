@@ -18,12 +18,22 @@
  * always rendered last so real teams stay at the top.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useEventStore } from './store'
 import { computeVisibleAgentIds, useDashboardFilter } from './filterModel'
 import type { AgentState } from './types'
 
 const UNGROUPED = 'Ungrouped'
+
+type StatusFilter = 'running' | 'stopped' | 'error' | 'stale'
+
+/** Legend entries, in display order; also the clickable status filters. */
+const STATUS_LEGEND: { status: StatusFilter; label: string }[] = [
+  { status: 'running', label: 'running' },
+  { status: 'stopped', label: 'stopped' },
+  { status: 'error', label: 'error' },
+  { status: 'stale', label: 'presumed stopped' },
+]
 
 function agentStatusLabel(agent: AgentState): 'running' | 'stopped' | 'error' | 'stale' {
   if (agent.status === 'running') return 'running'
@@ -61,6 +71,7 @@ function groupByTeam(
 export function TeamsTab() {
   const { agents } = useEventStore()
   const { team, sessionRoot } = useDashboardFilter()
+  const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(null)
 
   const visibleIds = useMemo(
     () => computeVisibleAgentIds({ team, sessionRoot }, agents),
@@ -77,10 +88,26 @@ export function TeamsTab() {
     return ungrouped ? [...named, [UNGROUPED, ungrouped] as [string, AgentState[]]] : named
   }, [groups])
 
-  const totalAgents = teamEntries.reduce((sum, [, members]) => sum + members.length, 0)
+  // Status filter (clickable legend): when set, drop members whose status
+  // label doesn't match, then drop teams left with no members.
+  const shownEntries = useMemo(() => {
+    if (!statusFilter) return teamEntries
+    return teamEntries
+      .map(
+        ([team, members]) =>
+          [team, members.filter((a) => agentStatusLabel(a) === statusFilter)] as [
+            string,
+            AgentState[],
+          ],
+      )
+      .filter(([, members]) => members.length > 0)
+  }, [teamEntries, statusFilter])
+
+  const totalAgents = shownEntries.reduce((sum, [, members]) => sum + members.length, 0)
+  const unfilteredTotal = teamEntries.reduce((sum, [, members]) => sum + members.length, 0)
   const isFiltered = visibleIds !== null
 
-  if (totalAgents === 0) {
+  if (unfilteredTotal === 0) {
     return (
       <div>
         <h2>Teams</h2>
@@ -98,22 +125,42 @@ export function TeamsTab() {
       <h2>Teams</h2>
       <ul className="stat-list graph-stats">
         <li>
-          <strong>{teamEntries.length}</strong> team{teamEntries.length === 1 ? '' : 's'} seen
+          <strong>{shownEntries.length}</strong> team{shownEntries.length === 1 ? '' : 's'}
+          {statusFilter ? ' shown' : ' seen'}
         </li>
         <li>
-          <strong>{totalAgents}</strong> agent{totalAgents === 1 ? '' : 's'} total
+          <strong>{totalAgents}</strong> agent{totalAgents === 1 ? '' : 's'}
+          {statusFilter ? ` ${statusFilter}` : ' total'}
         </li>
       </ul>
 
-      <div className="graph-legend">
-        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--running" /> running</span>
-        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stopped" /> stopped</span>
-        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--error" /> error</span>
-        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stale" /> presumed stopped</span>
+      <div className="graph-legend" role="group" aria-label="Filter agents by status">
+        {STATUS_LEGEND.map(({ status, label }) => {
+          const active = statusFilter === status
+          return (
+            <button
+              key={status}
+              type="button"
+              className={`graph-legend-item graph-legend-item--filter${active ? ' is-active' : ''}`}
+              aria-pressed={active}
+              onClick={() => setStatusFilter((cur) => (cur === status ? null : status))}
+            >
+              <span className={`graph-swatch graph-swatch--${status}`} /> {label}
+            </button>
+          )
+        })}
+        {statusFilter && (
+          <button type="button" className="graph-legend-clear" onClick={() => setStatusFilter(null)}>
+            clear filter
+          </button>
+        )}
       </div>
 
+      {totalAgents === 0 ? (
+        <p className="empty-state">No agents with status “{statusFilter}”.</p>
+      ) : (
       <div className="team-groups">
-        {teamEntries.map(([team, members]) => {
+        {shownEntries.map(([team, members]) => {
           const runningCount = members.filter((a) => a.status === 'running').length
           const sortedMembers = [...members].sort((a, b) => a.agentId.localeCompare(b.agentId))
           return (
@@ -147,6 +194,7 @@ export function TeamsTab() {
           )
         })}
       </div>
+      )}
     </div>
   )
 }
