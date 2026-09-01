@@ -286,6 +286,38 @@
   gap: 0.35rem;
 }
 
+/* Clickable status filters (Teams tab): reset the button chrome, keep the
+ * legend look, and mark the active one. */
+.graph-legend-item--filter {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+
+.graph-legend-item--filter:hover {
+  border-color: var(--color-border, #d1d5db);
+}
+
+.graph-legend-item--filter.is-active {
+  border-color: currentColor;
+  background: rgba(100, 108, 255, 0.12);
+  color: var(--color-text, inherit);
+}
+
+.graph-legend-clear {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #6b7280);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .graph-swatch {
   display: inline-block;
   width: 0.7rem;
