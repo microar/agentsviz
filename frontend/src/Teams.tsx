@@ -130,9 +130,15 @@ export function TeamsTab() {
                   return (
                     <li key={agent.agentId} className="team-agent">
                       <span className={`team-agent-dot team-agent-dot--${status}`} />
-                      <span className="team-agent-id">{agent.agentId}</span>
+                      <span className="team-agent-id" title={agent.agentId}>
+                        {agent.agentId}
+                      </span>
                       <span className={`team-agent-status team-agent-status--${status}`}>{status}</span>
-                      {agent.caller && <span className="team-agent-caller">via {agent.caller}</span>}
+                      {agent.caller && (
+                        <span className="team-agent-caller" title={agent.caller}>
+                          via {agent.caller}
+                        </span>
+                      )}
                     </li>
                   )
                 })}
