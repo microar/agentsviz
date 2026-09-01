@@ -27,9 +27,11 @@ import { useGraphFadeOut } from './graph/useGraphFadeOut'
 import { useEventTimeline } from './graph/useEventTimeline'
 import { reconstructStateAt } from './graph/history'
 import { Timeline } from './graph/Timeline'
+import { computeVisibleAgentIds, useDashboardFilter } from './filterModel'
 
 export function GraphTab() {
   const { agents, toolCalls, logs } = useEventStore()
+  const { team, sessionRoot } = useDashboardFilter()
   // Selection is local UI state, independent of the store/layout — opening
   // or closing the drawer never touches agents/toolCalls/logs or the
   // stable node slots, so the live graph keeps updating underneath it
@@ -70,12 +72,34 @@ export function GraphTab() {
   const { isRemoved } = useGraphFadeOut(liveAllAgents)
 
   const allAgents = isHistory && historicalSnapshot ? Object.values(historicalSnapshot.agents) : liveAllAgents
-  const agentList = useMemo(
-    () => (isHistory ? allAgents : allAgents.filter((a) => !isRemoved(a.agentId))),
-    [isHistory, allAgents, isRemoved],
+
+  // Header team/session scope (issue #73). `null` => no team picked, so
+  // nothing is hidden. Resolved against whichever agent map is currently
+  // driving the tab (the reconstructed snapshot in history mode, else the
+  // live store) so session `caller`-chain membership works in both.
+  const filterAgentsMap = isHistory && historicalSnapshot ? historicalSnapshot.agents : agents
+  const visibleIds = useMemo(
+    () => computeVisibleAgentIds({ team, sessionRoot }, filterAgentsMap, isHistory ? [] : logs),
+    [team, sessionRoot, filterAgentsMap, isHistory, logs],
   )
 
-  const activeToolCalls = isHistory && historicalSnapshot ? historicalSnapshot.toolCalls : toolCalls
+  const agentList = useMemo(() => {
+    const base = isHistory ? allAgents : allAgents.filter((a) => !isRemoved(a.agentId))
+    return visibleIds ? base.filter((a) => visibleIds.has(a.agentId)) : base
+  }, [isHistory, allAgents, isRemoved, visibleIds])
+
+  const activeToolCallsAll = isHistory && historicalSnapshot ? historicalSnapshot.toolCalls : toolCalls
+  // Keep only calls whose agent (or calling agent) is in the visible set,
+  // so tool nodes/edges for filtered-out runs disappear with them.
+  const activeToolCalls = useMemo(
+    () =>
+      visibleIds
+        ? activeToolCallsAll.filter(
+            (c) => visibleIds.has(c.agentId) || (c.caller !== undefined && visibleIds.has(c.caller)),
+          )
+        : activeToolCallsAll,
+    [activeToolCallsAll, visibleIds],
+  )
 
   const toolNames = useMemo(() => {
     const seen = new Set<string>()

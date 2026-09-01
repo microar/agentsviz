@@ -20,6 +20,7 @@
 
 import { useMemo } from 'react'
 import { useEventStore } from './store'
+import { computeVisibleAgentIds, useDashboardFilter } from './filterModel'
 import type { AgentState } from './types'
 
 const UNGROUPED = 'Ungrouped'
@@ -33,10 +34,19 @@ function agentStatusLabel(agent: AgentState): 'running' | 'stopped' | 'error' | 
   return 'stopped'
 }
 
-/** Groups agents by team, normalizing missing/empty team to an "Ungrouped" bucket. */
-function groupByTeam(agents: Record<string, AgentState>): Map<string, AgentState[]> {
+/**
+ * Groups agents by team, normalizing missing/empty team to an "Ungrouped"
+ * bucket. `visibleIds` (issue #73) is the header team/session scope: when
+ * non-null, agents outside it are dropped, so a selected team shows only
+ * its own card and a selected session only that root's agents within it.
+ */
+function groupByTeam(
+  agents: Record<string, AgentState>,
+  visibleIds: Set<string> | null,
+): Map<string, AgentState[]> {
   const groups = new Map<string, AgentState[]>()
   for (const agent of Object.values(agents)) {
+    if (visibleIds && !visibleIds.has(agent.agentId)) continue
     const key = agent.team && agent.team.trim() !== '' ? agent.team : UNGROUPED
     const list = groups.get(key)
     if (list) {
@@ -50,24 +60,35 @@ function groupByTeam(agents: Record<string, AgentState>): Map<string, AgentState
 
 export function TeamsTab() {
   const { agents } = useEventStore()
+  const { team, sessionRoot } = useDashboardFilter()
 
-  const groups = useMemo(() => groupByTeam(agents), [agents])
+  const visibleIds = useMemo(
+    () => computeVisibleAgentIds({ team, sessionRoot }, agents),
+    [team, sessionRoot, agents],
+  )
+
+  const groups = useMemo(() => groupByTeam(agents, visibleIds), [agents, visibleIds])
 
   const teamEntries = useMemo(() => {
     const named = [...groups.entries()]
-      .filter(([team]) => team !== UNGROUPED)
+      .filter(([teamName]) => teamName !== UNGROUPED)
       .sort(([a], [b]) => a.localeCompare(b))
     const ungrouped = groups.get(UNGROUPED)
     return ungrouped ? [...named, [UNGROUPED, ungrouped] as [string, AgentState[]]] : named
   }, [groups])
 
-  const totalAgents = Object.keys(agents).length
+  const totalAgents = teamEntries.reduce((sum, [, members]) => sum + members.length, 0)
+  const isFiltered = visibleIds !== null
 
   if (totalAgents === 0) {
     return (
       <div>
         <h2>Teams</h2>
-        <p className="empty-state">No agents yet — waiting for live data.</p>
+        <p className="empty-state">
+          {isFiltered
+            ? 'No agents match the current team/session filter.'
+            : 'No agents yet — waiting for live data.'}
+        </p>
       </div>
     )
   }

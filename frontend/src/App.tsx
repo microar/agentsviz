@@ -1,8 +1,23 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import './App.css'
 import { EventStoreProvider, useEventStore } from './store'
 import { GraphTab } from './Graph'
 import { TeamsTab } from './Teams'
+import { agentLabel } from './graph/layout'
+import {
+  ALL_SESSIONS,
+  ALL_TEAMS,
+  computeVisibleAgentIds,
+  DashboardFilterContext,
+  listSessionRoots,
+  listTeams,
+  loadPersistedSelection,
+  resolveSelection,
+  savePersistedSelection,
+  useDashboardFilter,
+  type DashboardFilterValue,
+  type FilterSelection,
+} from './filterModel'
 
 type TabId = 'graph' | 'logs' | 'teams'
 
@@ -26,24 +41,115 @@ const ALL_AGENTS = '__all__'
 /** Distance (px) from the bottom within which we still consider the user "at the bottom". */
 const AUTO_SCROLL_THRESHOLD = 24
 
+/**
+ * Shared team/session selection (issue #73). Holds the *raw* pick (so a
+ * team that's momentarily absent — e.g. before the WS snapshot lands on a
+ * fresh reload — is restored once it reappears) and hands consumers the
+ * *resolved* selection plus the live dropdown option lists. Persisted to
+ * localStorage on every change; `loadPersistedSelection` /
+ * `savePersistedSelection` swallow storage failures.
+ */
+function DashboardFilterProvider({ children }: { children: ReactNode }) {
+  const { agents, logs } = useEventStore()
+  const [raw, setRaw] = useState<FilterSelection>(loadPersistedSelection)
+
+  useEffect(() => {
+    savePersistedSelection(raw)
+  }, [raw])
+
+  const value = useMemo<DashboardFilterValue>(() => {
+    const resolved = resolveSelection(raw, agents, logs)
+    return {
+      ...resolved,
+      teams: listTeams(agents, logs),
+      sessionRoots: listSessionRoots(resolved.team, agents, logs),
+      // Changing the team always drops back to "All sessions" — a root from
+      // the previous team is meaningless under the new one.
+      setTeam: (team: string) => setRaw({ team, sessionRoot: ALL_SESSIONS }),
+      setSessionRoot: (sessionRoot: string) => setRaw((prev) => ({ ...prev, sessionRoot })),
+    }
+  }, [raw, agents, logs])
+
+  return <DashboardFilterContext.Provider value={value}>{children}</DashboardFilterContext.Provider>
+}
+
+/** The two header dropdowns. Dropdown 2 (Session) only renders once a team is picked. */
+function DashboardFilterControls() {
+  const { team, sessionRoot, teams, sessionRoots, setTeam, setSessionRoot } = useDashboardFilter()
+  return (
+    <div className="dashboard-filter">
+      <label className="dashboard-filter-field">
+        Team:{' '}
+        <select value={team} onChange={(e) => setTeam(e.target.value)}>
+          <option value={ALL_TEAMS}>All teams</option>
+          {teams.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </label>
+      {team !== ALL_TEAMS && (
+        <label className="dashboard-filter-field">
+          Session:{' '}
+          <select value={sessionRoot} onChange={(e) => setSessionRoot(e.target.value)}>
+            <option value={ALL_SESSIONS}>All sessions</option>
+            {sessionRoots.map((root) => (
+              <option key={root} value={root}>
+                {agentLabel(root)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </div>
+  )
+}
+
 function LogsTab() {
   const { agents, logs } = useEventStore()
+  const { team, sessionRoot } = useDashboardFilter()
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS)
   const [autoScroll, setAutoScroll] = useState(true)
   const scrollRef = useRef<HTMLUListElement | null>(null)
 
+  // Team/session scope from the header (issue #73). null => no team picked,
+  // so nothing is hidden.
+  const visibleIds = useMemo(
+    () => computeVisibleAgentIds({ team, sessionRoot }, agents, logs),
+    [team, sessionRoot, agents, logs],
+  )
+
+  // The per-agent dropdown below is scoped to that visible set, so a pick
+  // left over from a previous team/session would silently hide every line —
+  // reset it to "All agents" whenever the header selection changes. Done as
+  // a render-time reset (the React "adjust state when a prop changes"
+  // pattern) rather than an effect so it lands in the same commit.
+  const selectionKey = JSON.stringify([team, sessionRoot])
+  const [lastSelectionKey, setLastSelectionKey] = useState(selectionKey)
+  if (lastSelectionKey !== selectionKey) {
+    setLastSelectionKey(selectionKey)
+    setAgentFilter(ALL_AGENTS)
+  }
+
   // Known agents to populate the filter dropdown — union of agents seen via
   // agent_start/stop and any agentId that has shown up on a log/error line
-  // (covers the case where a log arrives before/without a lifecycle event).
+  // (covers the case where a log arrives before/without a lifecycle event),
+  // restricted to the header's visible set.
   const agentIds = useMemo(() => {
-    const ids = new Set(Object.keys(agents))
-    for (const entry of logs) ids.add(entry.agentId)
+    const ids = new Set<string>()
+    for (const id of Object.keys(agents)) if (!visibleIds || visibleIds.has(id)) ids.add(id)
+    for (const entry of logs) if (!visibleIds || visibleIds.has(entry.agentId)) ids.add(entry.agentId)
     return Array.from(ids).sort()
-  }, [agents, logs])
+  }, [agents, logs, visibleIds])
 
   const filteredLogs = useMemo(
-    () => (agentFilter === ALL_AGENTS ? logs : logs.filter((entry) => entry.agentId === agentFilter)),
-    [logs, agentFilter],
+    () =>
+      logs.filter((entry) => {
+        if (visibleIds && !visibleIds.has(entry.agentId)) return false
+        return agentFilter === ALL_AGENTS || entry.agentId === agentFilter
+      }),
+    [logs, visibleIds, agentFilter],
   )
 
   // Auto-scroll to the bottom whenever new lines arrive, unless the user has
@@ -90,7 +196,9 @@ function LogsTab() {
 
       {filteredLogs.length === 0 ? (
         <p className="empty-state">
-          {logs.length === 0 ? 'No log events yet — waiting for live data.' : 'No log events for this agent yet.'}
+          {logs.length === 0
+            ? 'No log events yet — waiting for live data.'
+            : 'No log events match the current filter yet.'}
         </p>
       ) : (
         <ul className="log-list" ref={scrollRef} onScroll={handleScroll}>
@@ -125,6 +233,7 @@ function DashboardShell() {
         <p className="app-subtitle">
           Agent activity dashboard <ConnectionBadge />
         </p>
+        <DashboardFilterControls />
       </header>
 
       <nav className="tab-bar" role="tablist" aria-label="Dashboard sections">
@@ -152,7 +261,9 @@ function DashboardShell() {
 function App() {
   return (
     <EventStoreProvider>
-      <DashboardShell />
+      <DashboardFilterProvider>
+        <DashboardShell />
+      </DashboardFilterProvider>
     </EventStoreProvider>
   )
 }
