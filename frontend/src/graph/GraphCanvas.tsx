@@ -17,13 +17,13 @@
  * never re-runs the pan/zoom math.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AgentState } from '../types'
 import { drawAgentNode } from './draw-agents'
 import { drawToolNode } from './draw-tool-nodes'
 import { drawEdge, drawSubAgentEdge, type Edge } from './draw-edges'
 import { drawEdgeParticles, updateEdgeAnimStates, type EdgeAnimState } from './draw-particles'
-import { computeFade, isSubAgent } from './fade'
+import { isSubAgent } from './fade'
 import { hitTestAgent } from './hit-detection'
 import {
   AGENT_CENTER,
@@ -44,25 +44,33 @@ export interface GraphCanvasProps {
   selectedAgentId: string | null
   onSelectAgent: (agentId: string) => void
   /**
-   * Every agentId ever seen this session (issue #49) — used by `computeFade`
+   * Every agentId ever seen this session (issue #49) — used by `isSubAgent`
    * to recognize a sub-agent (an agent whose `caller` names another agent in
-   * this set) so it can be exempted from fade-out/removal. Deliberately the
+   * this set) so its parent->child edge is still drawn. Deliberately the
    * *full* session history, not just `allAgents` (which, in live mode, is
-   * already filtered down to not-yet-removed agents) — a sub-agent must stay
+   * only the currently-running agents — issue #83) — a sub-agent must stay
    * recognized as such even after the top-level agent that spawned it has
-   * itself faded out of `allAgents`.
+   * itself left `allAgents`.
    */
   knownAgentIds: ReadonlySet<string>
   /**
    * True when rendering a reconstructed historical snapshot rather than
-   * live state (issue #43). Skips the #39 fade-out-on-stop timer entirely:
-   * a historical snapshot already reflects state exactly as of the
-   * scrubbed instant, so a "stopped" agent in that snapshot is shown at
-   * full opacity regardless of how long ago (relative to *now*) it
-   * actually stopped — that's the point of scrubbing back to see agents
-   * that would already be faded/gone in the live view.
+   * live state (issue #43). The live view is running-only (issue #83) and a
+   * historical snapshot is authoritative as of its scrubbed instant, so in
+   * both cases every drawn agent is fully opaque — there is no longer a
+   * fade-out-on-stop ramp (the #39/#67 grace window was removed in #83).
+   * The flag still drives the history border/aria treatment and lets a
+   * snapshot render non-running agents.
    */
   historyMode?: boolean
+  /**
+   * Issue #83: the anchored per-agent action panel (see `GraphAgentPanel`),
+   * supplied by the parent only in live mode when a running agent is
+   * selected. Rendered as a child of the canvas wrapper and moved on top of
+   * the selected node every frame by the render loop below, using the same
+   * camera projection as hit-detection. `undefined` => nothing is drawn.
+   */
+  anchoredPanel?: ReactNode
 }
 
 function readCssColor(canvas: HTMLCanvasElement): { text: string; muted: string } {
@@ -81,15 +89,15 @@ export function GraphCanvas({
   onSelectAgent,
   knownAgentIds,
   historyMode = false,
+  anchoredPanel,
 }: GraphCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  // Wrapper for the issue #83 anchored action panel — repositioned every
+  // frame by the render loop (screen-space `transform`) so it stays glued
+  // to the selected node through pan/zoom.
+  const panelAnchorRef = useRef<HTMLDivElement | null>(null)
   const camera = useCanvasCamera(canvasRef)
-  // Read every frame/click by the render loop and hit-test handler below —
-  // kept in a ref (rather than closed over directly) purely so those
-  // effects, which intentionally run once on mount, still see live updates.
-  const historyModeRef = useRef(historyMode)
-  historyModeRef.current = historyMode
   // Bumped by a ResizeObserver below so the auto-fit effect re-runs once the
   // wrapper actually has its final flex-layout size, not just whatever size
   // (possibly 0, possibly a pre-layout guess) it had on first paint.
@@ -98,8 +106,6 @@ export function GraphCanvas({
   // Lineage-ordered (issue #71) so `useStableLayout` puts a parent and the
   // sub-agents it spawns on contiguous spiral slots — see `orderByLineage`.
   const agentIds = useMemo(() => orderByLineage(allAgents), [allAgents])
-  const knownAgentIdsRef = useRef(knownAgentIds)
-  knownAgentIdsRef.current = knownAgentIds
 
   // Parent -> spawned-sub-agent pairs (issue #71): every visible agent whose
   // `caller` names another known agent (reusing `isSubAgent` / the same
@@ -197,9 +203,9 @@ export function GraphCanvas({
       if (camera.isInteracting()) return
       const rect = canvas!.getBoundingClientRect()
       const world = camera.screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
-      const visibleIds = agentsRef.current
-        .filter((a) => historyModeRef.current || !computeFade(a, Date.now(), knownAgentIdsRef.current).removed)
-        .map((a) => a.agentId)
+      // Every agent handed to the canvas is drawn (live = running-only,
+      // history = the snapshot as-is — issue #83), so all are hittable.
+      const visibleIds = agentsRef.current.map((a) => a.agentId)
       const hit = hitTestAgent(world, agentPositionsRef.current, visibleIds)
       if (hit) onSelectAgent(hit)
     }
@@ -237,7 +243,6 @@ export function GraphCanvas({
 
       const dpr = window.devicePixelRatio || 1
       const cam = camera.getCamera()
-      const nowMs = Date.now()
 
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx!.clearRect(0, 0, cssWidth, cssHeight)
@@ -249,16 +254,13 @@ export function GraphCanvas({
       const edgeList = edgesRef.current
       const agents = agentsRef.current
 
+      // Issue #83: no fade-out ramp anymore. The live view only ever holds
+      // running agents and a history snapshot is authoritative for its
+      // instant, so every drawn agent is fully opaque. The per-agent alpha
+      // map is kept (all 1s) so the edge/particle/sub-agent-edge drawing
+      // below — still exercised in history mode — is untouched.
       const alphaByAgent = new Map<string, number>()
-      for (const agent of agents) {
-        // History mode (issue #43): a reconstructed snapshot is already
-        // "as of" the scrubbed instant, so every agent in it renders at
-        // full opacity — no live fade-out timer applies.
-        alphaByAgent.set(
-          agent.agentId,
-          historyModeRef.current ? 1 : computeFade(agent, nowMs, knownAgentIdsRef.current).alpha,
-        )
-      }
+      for (const agent of agents) alphaByAgent.set(agent.agentId, 1)
 
       updateEdgeAnimStates(edgeAnimStatesRef.current, edgeList, perfNow)
 
@@ -316,6 +318,35 @@ export function GraphCanvas({
         )
       }
 
+      // Issue #83: keep the anchored action panel glued to the selected
+      // node. Same projection as hit-detection (world -> screen is the
+      // inverse of `camera.screenToWorld`): screen = world * scale + cam.
+      // The panel is a normal DOM child of the wrapper, so we only write
+      // its `transform` here — never re-render React for a pan/zoom frame.
+      const panelEl = panelAnchorRef.current
+      if (panelEl) {
+        const selPos = selectedRef.current ? agentPositions.get(selectedRef.current) : undefined
+        if (selPos) {
+          const nodeX = selPos.x * cam.scale + cam.x
+          const nodeY = selPos.y * cam.scale + cam.y
+          const pw = panelEl.offsetWidth
+          const ph = panelEl.offsetHeight
+          // Prefer centered above the node; drop below if it would clip the
+          // top; then clamp inside the (overflow-hidden) canvas frame.
+          let left = nodeX - pw / 2
+          left = Math.max(8, Math.min(left, cssWidth - pw - 8))
+          let top = nodeY - ph - 18
+          if (top < 8) top = Math.min(nodeY + 26, cssHeight - ph - 8)
+          if (top < 8) top = 8
+          panelEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
+          panelEl.style.visibility = 'visible'
+        } else {
+          // Selected agent has no slot (e.g. it just stopped and left the
+          // live set) — hide until the parent tears the panel down.
+          panelEl.style.visibility = 'hidden'
+        }
+      }
+
       rafId = requestAnimationFrame(frame)
     }
 
@@ -323,14 +354,6 @@ export function GraphCanvas({
     return () => cancelAnimationFrame(rafId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // Visually-hidden agent buttons keep click-to-inspect reachable via
-  // keyboard/screen reader now that the graph itself is a flat canvas with
-  // no individually-focusable DOM nodes.
-  const visibleAgents = useMemo(
-    () => allAgents.filter((a) => historyMode || !computeFade(a, Date.now(), knownAgentIds).removed),
-    [allAgents, historyMode, knownAgentIds],
-  )
 
   return (
     <div className={`graph-canvas-wrap${historyMode ? ' graph-canvas-wrap--history' : ''}`} ref={wrapperRef}>
@@ -340,8 +363,13 @@ export function GraphCanvas({
         role="img"
         aria-label={historyMode ? 'Historical agent graph (viewing past state)' : 'Live agent graph'}
       />
+      {/* Visually-hidden agent buttons keep click-to-inspect reachable via
+          keyboard/screen reader now that the graph itself is a flat canvas
+          with no individually-focusable DOM nodes. Every agent passed in is
+          drawn (issue #83: live = running-only, history = the snapshot), so
+          the list mirrors `allAgents` directly. */}
       <div className="sr-only" aria-label="Agents (keyboard-accessible list)">
-        {visibleAgents.map((agent) => (
+        {allAgents.map((agent) => (
           <button key={agent.agentId} type="button" onClick={() => onSelectAgent(agent.agentId)}>
             {agent.agentId}
             {agent.team ? ` (${agent.team})` : ''} — {agent.status}
@@ -350,6 +378,14 @@ export function GraphCanvas({
           </button>
         ))}
       </div>
+      {/* Issue #83 anchored action panel — positioned every frame by the
+          render loop above. Only mounted when the parent supplies it (live
+          mode, running agent selected). */}
+      {anchoredPanel && (
+        <div className="graph-anchored-panel" ref={panelAnchorRef}>
+          {anchoredPanel}
+        </div>
+      )}
     </div>
   )
 }

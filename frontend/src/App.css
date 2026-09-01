@@ -433,6 +433,67 @@
   cursor: grabbing;
 }
 
+/* Anchored per-agent action panel (issue #83) — a normal DOM child of
+   `.graph-canvas-wrap` that GraphCanvas's render loop positions on top of
+   the selected node every frame via `transform: translate(...)`, using the
+   same camera projection as canvas hit-detection so it tracks the node
+   through pan/zoom. Replaces the slide-in AgentDrawer for the *live* Graph
+   tab; history mode still uses the drawer. */
+.graph-anchored-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  width: min(360px, calc(100% - 16px));
+  will-change: transform;
+  /* Hidden until GraphCanvas's render loop places it on the node next
+     frame, so it never flashes at the wrapper's top-left corner first. */
+  visibility: hidden;
+}
+
+.graph-agent-panel {
+  max-height: calc(60vh - 32px);
+  overflow-y: auto;
+  background: var(--color-background, #ffffff);
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  padding: 1rem 1.1rem 1.25rem;
+  animation: graph-agent-panel-pop 0.14s ease-out;
+}
+
+@keyframes graph-agent-panel-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.graph-agent-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+
+.graph-agent-panel-title {
+  margin: 0;
+  font-size: 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.graph-agent-panel-team {
+  margin: 0.15rem 0 0;
+  color: var(--color-text-muted, #6b7280);
+  font-size: 0.8rem;
+}
+
 /* Timeline scrubber (issue #43) — see frontend/src/graph/Timeline.tsx. */
 .graph-timeline {
   margin-bottom: 1rem;

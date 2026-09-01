@@ -7,6 +7,12 @@
  * is "selected") — it never touches graph layout state or the WebSocket
  * connection, so the live graph is unaffected while the drawer is open or
  * closed.
+ *
+ * Issue #83 split the detail rendering (meta + tool-call list + logs) out
+ * into `AgentDetailBody` so the new anchored per-agent action panel on the
+ * *live* Graph tab (`graph/GraphAgentPanel.tsx`) can reuse it verbatim.
+ * `AgentDrawer` itself — the slide-in side drawer — is now only used by the
+ * Graph tab's *history* mode (see Graph.tsx).
  */
 
 import { useEffect, useMemo } from 'react'
@@ -49,19 +55,7 @@ export function AgentDrawer({ agent, toolCalls, logs, onClose }: AgentDrawerProp
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [agent, onClose])
 
-  const agentToolCalls = useMemo(() => {
-    if (!agent) return []
-    return toolCalls.filter((call) => call.agentId === agent.agentId || call.caller === agent.agentId)
-  }, [agent, toolCalls])
-
-  const agentLogs = useMemo(() => {
-    if (!agent) return []
-    return logs.filter((entry) => entry.agentId === agent.agentId)
-  }, [agent, logs])
-
   if (!agent) return null
-
-  const overallDuration = durationMs(agent.startedAt, agent.stoppedAt)
 
   return (
     <div className="drawer-overlay" onClick={onClose}>
@@ -81,7 +75,38 @@ export function AgentDrawer({ agent, toolCalls, logs, onClose }: AgentDrawerProp
           </button>
         </div>
 
-        <dl className="agent-drawer-meta">
+        <AgentDetailBody agent={agent} toolCalls={toolCalls} logs={logs} />
+      </aside>
+    </div>
+  )
+}
+
+export interface AgentDetailBodyProps {
+  agent: AgentState
+  toolCalls: ToolCallState[]
+  logs: LogEntry[]
+}
+
+/**
+ * The scrollable detail content for one agent — status/timing meta, its
+ * tool-call list, and its log entries. Extracted from `AgentDrawer` in
+ * issue #83 so both the history-mode side drawer and the live-mode anchored
+ * action panel (`graph/GraphAgentPanel.tsx`) render agent activity
+ * identically. Assumes a non-null `agent` — callers guard for that.
+ */
+export function AgentDetailBody({ agent, toolCalls, logs }: AgentDetailBodyProps) {
+  const agentToolCalls = useMemo(
+    () => toolCalls.filter((call) => call.agentId === agent.agentId || call.caller === agent.agentId),
+    [agent, toolCalls],
+  )
+
+  const agentLogs = useMemo(() => logs.filter((entry) => entry.agentId === agent.agentId), [agent, logs])
+
+  const overallDuration = durationMs(agent.startedAt, agent.stoppedAt)
+
+  return (
+    <>
+      <dl className="agent-drawer-meta">
           <div>
             <dt>Status</dt>
             <dd>
@@ -157,7 +182,6 @@ export function AgentDrawer({ agent, toolCalls, logs, onClose }: AgentDrawerProp
             </ul>
           )}
         </section>
-      </aside>
-    </div>
+    </>
   )
 }
