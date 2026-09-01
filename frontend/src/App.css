@@ -85,7 +85,15 @@
   border-radius: 12px;
   border: 1px solid rgba(127, 127, 127, 0.25);
   padding: 2.5rem 2rem;
-  min-height: 240px;
+  /*
+   * Floor tall enough to hold the Graph tab (its `.graph-canvas-wrap` is
+   * `height: 60vh; min-height: 420px` plus ~220px of h2/timeline/stats/
+   * legend/hint chrome), so switching to the shorter Logs or Teams views
+   * never shrinks the panel box (issue #77). Mirrors the canvas's own
+   * `60vh` / `420px` pair: `max(640px, 60vh + 220px)`. It's a floor, not a
+   * fixed height — tabs whose content genuinely exceeds it still grow.
+   */
+  min-height: max(640px, calc(60vh + 220px));
   background: rgba(127, 127, 127, 0.05);
 }
 

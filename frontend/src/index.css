@@ -20,6 +20,13 @@
   color-scheme: light dark;
   color: var(--text);
   background: var(--bg);
+
+  /*
+   * Always reserve room for the vertical scrollbar so the centered
+   * `.app-shell` never shifts horizontally when a tab change grows/shrinks
+   * the page past the viewport height and toggles the scrollbar (issue #77).
+   */
+  scrollbar-gutter: stable;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
