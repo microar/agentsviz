@@ -28,6 +28,7 @@ import { useEventTimeline } from './graph/useEventTimeline'
 import { reconstructStateAt } from './graph/history'
 import { Timeline } from './graph/Timeline'
 import { computeVisibleAgentIds, useDashboardFilter } from './filterModel'
+import { STATUS_LEGEND, agentStatusLabel, type StatusFilter } from './agentStatus'
 
 export function GraphTab() {
   const { agents, toolCalls, logs } = useEventStore()
@@ -42,6 +43,13 @@ export function GraphTab() {
   // cutoff the Graph tab renders a reconstructed snapshot as of. This is
   // local-only UI state per client, never synced over the WebSocket.
   const [scrubAtMs, setScrubAtMs] = useState<number | null>(null)
+
+  // Status filter (clickable legend, issue #81) — same pattern as the Teams
+  // tab (#80): local-only, single-select, `null` = show every status.
+  // Applies on top of whichever agent map is driving the tab (live store or
+  // reconstructed history snapshot) and on top of the header Team/Session
+  // scope, by being folded into the `agentList` derivation below.
+  const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(null)
   const { events: timelineEvents, earliestMs, latestMs } = useEventTimeline()
   const isHistory = scrubAtMs !== null
 
@@ -85,20 +93,32 @@ export function GraphTab() {
 
   const agentList = useMemo(() => {
     const base = isHistory ? allAgents : allAgents.filter((a) => !isRemoved(a.agentId))
-    return visibleIds ? base.filter((a) => visibleIds.has(a.agentId)) : base
-  }, [isHistory, allAgents, isRemoved, visibleIds])
+    const scoped = visibleIds ? base.filter((a) => visibleIds.has(a.agentId)) : base
+    // Legend status filter (#81) — last narrowing so it composes with both
+    // the fade-out/history base set and the header Team/Session scope.
+    return statusFilter ? scoped.filter((a) => agentStatusLabel(a) === statusFilter) : scoped
+  }, [isHistory, allAgents, isRemoved, visibleIds, statusFilter])
 
   const activeToolCallsAll = isHistory && historicalSnapshot ? historicalSnapshot.toolCalls : toolCalls
   // Keep only calls whose agent (or calling agent) is in the visible set,
-  // so tool nodes/edges for filtered-out runs disappear with them.
+  // so tool nodes/edges for filtered-out runs disappear with them. When the
+  // legend status filter (#81) is active, `agentList` is already the fully
+  // narrowed set (team/session scope ∩ status), so scope tool calls to its
+  // ids; otherwise fall back to the header-scope `visibleIds` (`null` =
+  // show everything) to preserve the pre-#81 behaviour exactly.
+  const toolScopeIds = useMemo(
+    () => (statusFilter ? new Set(agentList.map((a) => a.agentId)) : visibleIds),
+    [statusFilter, agentList, visibleIds],
+  )
   const activeToolCalls = useMemo(
     () =>
-      visibleIds
+      toolScopeIds
         ? activeToolCallsAll.filter(
-            (c) => visibleIds.has(c.agentId) || (c.caller !== undefined && visibleIds.has(c.caller)),
+            (c) =>
+              toolScopeIds.has(c.agentId) || (c.caller !== undefined && toolScopeIds.has(c.caller)),
           )
         : activeToolCallsAll,
-    [activeToolCallsAll, visibleIds],
+    [activeToolCallsAll, toolScopeIds],
   )
 
   const toolNames = useMemo(() => {
@@ -121,6 +141,12 @@ export function GraphTab() {
   }, [activeToolCalls])
 
   const running = agentList.filter((a) => a.status === 'running').length
+
+  // Friendly wording for the active legend filter (#81), e.g. `stale` ->
+  // "presumed stopped" — used in the empty-state copy.
+  const statusFilterLabel = statusFilter
+    ? (STATUS_LEGEND.find((s) => s.status === statusFilter)?.label ?? statusFilter)
+    : null
 
   // Stopped agents that have already aged out of the live view's grace
   // window (see graph/fade.ts) — i.e. runs that happened but are no longer
@@ -166,11 +192,33 @@ export function GraphTab() {
         </li>
       </ul>
 
-      <div className="graph-legend">
-        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--running" /> running</span>
-        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stopped" /> stopped</span>
-        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--error" /> error</span>
-        <span className="graph-legend-item"><span className="graph-swatch graph-swatch--stale" /> presumed stopped</span>
+      {/*
+        The four *status* swatches double as single-select toggle filters
+        (issue #81, matching the Teams tab) — click one to narrow the graph
+        to agents with that status, click it again (or "clear filter") to
+        reset. The three edge/link swatches below stay plain, non-interactive
+        spans: they describe edge styling, not something you can filter on.
+      */}
+      <div className="graph-legend" role="group" aria-label="Filter agents by status">
+        {STATUS_LEGEND.map(({ status, label }) => {
+          const active = statusFilter === status
+          return (
+            <button
+              key={status}
+              type="button"
+              className={`graph-legend-item graph-legend-item--filter${active ? ' is-active' : ''}`}
+              aria-pressed={active}
+              onClick={() => setStatusFilter((cur) => (cur === status ? null : status))}
+            >
+              <span className={`graph-swatch graph-swatch--${status}`} /> {label}
+            </button>
+          )
+        })}
+        {statusFilter && (
+          <button type="button" className="graph-legend-clear" onClick={() => setStatusFilter(null)}>
+            clear filter
+          </button>
+        )}
         <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--pending" /> tool call active</span>
         <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--settled" /> tool call settled</span>
         <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--subagent" /> subagent link</span>
@@ -188,13 +236,18 @@ export function GraphTab() {
           }`}
         >
           <p className="empty-state">
-            {isHistory
-              ? 'No agents were active at this point in time.'
-              : visibleIds
-                ? 'No agents match the current team/session filter.'
-                : agedOutRuns > 0
-                  ? `No active agents right now. ${agedOutRuns} agent${agedOutRuns === 1 ? '' : 's'} ran earlier this session — scrub back on the timeline above, or open the Teams tab, to see them.`
-                  : 'No active agents right now. Recently-stopped agents linger here briefly; scrub back on the timeline above, or open the Teams tab, to see past activity.'}
+            {statusFilter
+              ? // Legend status filter (#81) took precedence over the header
+                // scope / history / aged-out copy below — nothing in the
+                // current agent map carries the selected status.
+                `No ${isHistory ? '' : 'visible '}agents have status “${statusFilterLabel}”.`
+              : isHistory
+                ? 'No agents were active at this point in time.'
+                : visibleIds
+                  ? 'No agents match the current team/session filter.'
+                  : agedOutRuns > 0
+                    ? `No active agents right now. ${agedOutRuns} agent${agedOutRuns === 1 ? '' : 's'} ran earlier this session — scrub back on the timeline above, or open the Teams tab, to see them.`
+                    : 'No active agents right now. Recently-stopped agents linger here briefly; scrub back on the timeline above, or open the Teams tab, to see past activity.'}
           </p>
         </div>
       ) : (
