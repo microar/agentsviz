@@ -21,28 +21,10 @@
 import { useMemo, useState } from 'react'
 import { useEventStore } from './store'
 import { computeVisibleAgentIds, useDashboardFilter } from './filterModel'
+import { STATUS_LEGEND, agentStatusLabel, type StatusFilter } from './agentStatus'
 import type { AgentState } from './types'
 
 const UNGROUPED = 'Ungrouped'
-
-type StatusFilter = 'running' | 'stopped' | 'error' | 'stale'
-
-/** Legend entries, in display order; also the clickable status filters. */
-const STATUS_LEGEND: { status: StatusFilter; label: string }[] = [
-  { status: 'running', label: 'running' },
-  { status: 'stopped', label: 'stopped' },
-  { status: 'error', label: 'error' },
-  { status: 'stale', label: 'presumed stopped' },
-]
-
-function agentStatusLabel(agent: AgentState): 'running' | 'stopped' | 'error' | 'stale' {
-  if (agent.status === 'running') return 'running'
-  // A presumed (not explicitly reported) stop gets its own label — see
-  // Graph.tsx's agentStatusClass for the same priority reasoning.
-  if (agent.inferred) return 'stale'
-  if (agent.stopStatus === 'error') return 'error'
-  return 'stopped'
-}
 
 /**
  * Groups agents by team, normalizing missing/empty team to an "Ungrouped"
