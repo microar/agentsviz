@@ -4,15 +4,15 @@
  *
  * The Graph tab's legend swatches (`src/App.css`) are plain hand-authored
  * CSS, independent of `src/graph/colors.ts`'s `COLORS` object — the single
- * source of truth for the actual canvas node/edge colors drawn by
- * `draw-agents.ts`/`draw-edges.ts` via `agentColors()`. Nothing enforces
+ * source of truth for the actual graph node/edge colors (React Flow custom
+ * nodes since issue #87) via `agentColors()`. Nothing enforces
  * that the two stay in sync, which is exactly how they drifted before this
  * issue (`.graph-swatch--stopped` stayed hardcoded gray after #40 moved the
  * real stopped-agent color to green). This script re-derives both sides
  * from their real source files (rather than duplicating literal color
  * values here) and diffs them, per the repo's convention of small
- * standalone `.mjs` verification scripts (see verify-layout.mjs) for pure
- * logic with no test runner wired in yet — run with
+ * standalone `.mjs` verification scripts (see verify-filter-model.mjs) for
+ * pure logic with no test runner wired in yet — run with
  * `node scripts/verify-legend-colors.mjs` from `frontend/`.
  *
  * Exits non-zero (and prints which pairing failed) on any mismatch.

@@ -1,5 +1,7 @@
 /**
- * Canvas color tokens for the graph (issue #40).
+ * Status color tokens for the graph (issue #40; still the source of truth
+ * for the React Flow renderer added in issue #87 — see `GraphNodes.tsx` /
+ * `graphModel.ts`).
  *
  * These are carried over verbatim from the pre-#40 SVG/CSS implementation
  * (`App.css`'s `.graph-node--*` / `.graph-edge--*` rules) rather than
@@ -38,11 +40,11 @@ export const COLORS = {
   edgeError: 'rgba(220, 38, 38, 0.55)',
   edgePending: '#d97706',
 
-  // Parent agent -> spawned sub-agent edge (issue #71). Drawn by
-  // `drawSubAgentEdge` in draw-edges.ts as a plain static line with an
-  // arrowhead pointing at the child — no marching-ants, no particles.
-  // Kept in sync by hand with `.graph-edge-swatch--subagent` in App.css
-  // (asserted by scripts/verify-legend-colors.mjs).
+  // Parent agent -> spawned sub-agent edge (issue #71). Rendered by
+  // React Flow (issue #87) as a plain line with an arrowhead pointing at
+  // the child — deliberately outside the amber/green/red/gray tool-edge
+  // language. Kept in sync by hand with `.graph-edge-swatch--subagent` in
+  // App.css (asserted by scripts/verify-legend-colors.mjs).
   subAgentLink: 'rgba(99, 140, 210, 0.75)',
 
   label: 'rgba(148, 148, 158, 0.95)',

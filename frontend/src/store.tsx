@@ -119,8 +119,8 @@ function agentFromStartEvent(event: LifecycleEvent): AgentState {
  * A `caller` worth recording on an *agent* record: a non-empty id naming
  * some *other* agent. `tool_call_*` / `agent_stop` events on a top-level
  * agent carry `caller === agentId` as a self-reference; storing that would
- * make the agent look like its own sub-agent to `isSubAgent` (graph/fade.ts)
- * and exempt it from grace-window removal. Mirrors `meaningfulCaller` in
+ * make the agent look like its own sub-agent to `isSubAgent`
+ * (graph/graphModel.ts). Mirrors `meaningfulCaller` in
  * `server/src/store.ts`.
  */
 function meaningfulCaller(agentId: string, caller: string | undefined): string | undefined {

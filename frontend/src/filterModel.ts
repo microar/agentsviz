@@ -17,7 +17,7 @@
  * strips the types), and so all three tabs share one implementation of
  * "root agent + session membership" rather than re-deriving it.
  *
- * "Root agent" mirrors the negation of `graph/fade.ts`'s `isSubAgent`: an
+ * "Root agent" mirrors the negation of `graph/graphModel.ts`'s `isSubAgent`: an
  * agent is a root unless its `caller` names another *known* agent. A
  * session is that root plus every agent that belongs to it — by the
  * hooks-emitter `${session_id}-${agent_id}` id scheme, or by its `caller`
@@ -102,7 +102,7 @@ export function listTeams(
  * self-referential `caller`, or a `caller` that isn't itself a known agent
  * (e.g. the instrumentation library's default `caller: "user"`). A log-only
  * agentId with no record is treated as a root. Mirrors the negation of
- * `graph/fade.ts`'s `isSubAgent`.
+ * `graph/graphModel.ts`'s `isSubAgent`.
  */
 export function isRootAgent(
   agentId: string,

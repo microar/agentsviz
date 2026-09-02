@@ -3,7 +3,7 @@ import './App.css'
 import { EventStoreProvider, useEventStore } from './store'
 import { GraphTab } from './Graph'
 import { TeamsTab } from './Teams'
-import { agentLabel } from './graph/layout'
+import { agentLabel } from './graph/labels'
 import {
   ALL_SESSIONS,
   ALL_TEAMS,

@@ -1,11 +1,12 @@
 /**
- * Live agent graph view (issue #7), redesigned for issue #40 to render as a
- * native Canvas 2D pipeline (agent-flow-style nodes/edges/particles) rather
- * than the original DOM/SVG graph. See `frontend/src/graph/` for the
- * rendering internals (layout, camera, draw-*, particles, hit-detection,
- * render-cache) — this file stays the tab-level shell: header stats,
- * legend, the history/timeline scrubber (#43), and wiring node selection to
- * the per-agent action view.
+ * Live agent graph view (issue #7). Redesigned for #40 as a native Canvas
+ * 2D pipeline, then migrated to React Flow (`@xyflow/react`) in issue #87
+ * so agent nodes are draggable and their edges stay attached — see
+ * `frontend/src/graph/GraphFlow.tsx` (renderer), `graphModel.ts` (store →
+ * nodes/edges) and `autoLayout.ts` (dagre seed positions). This file stays
+ * the tab-level shell: header stats, legend, the history/timeline scrubber
+ * (#43) + playback transport (#85), and wiring node selection to the
+ * per-agent action view.
  *
  * Live-only view (issue #83): in live mode the Graph tab renders *only*
  * agents whose `status === 'running'`. The instant an agent stops, fails,
@@ -33,7 +34,7 @@ import { useMemo, useState } from 'react'
 import { useEventStore } from './store'
 import type { ToolCallState } from './types'
 import { AgentDrawer } from './AgentDrawer'
-import { GraphCanvas } from './graph/GraphCanvas'
+import { GraphFlow } from './graph/GraphFlow'
 import { GraphAgentPanel } from './graph/GraphAgentPanel'
 import { useEventTimeline } from './graph/useEventTimeline'
 import { reconstructStateAt } from './graph/history'
@@ -93,7 +94,7 @@ export function GraphTab() {
   // Every agentId ever seen this session (issue #49) — the store never
   // removes an agent entry once seen (see store.tsx), so `agents`' keys are
   // always the full history, not just what's currently displayed. Passed to
-  // GraphCanvas so it can recognize a sub-agent (caller names a known
+  // GraphFlow so it can recognize a sub-agent (caller names a known
   // agentId) even after the top-level agent that spawned it has itself
   // dropped out of the running-only `agentList` below.
   const knownAgentIds = useMemo(() => new Set(Object.keys(agents)), [agents])
@@ -147,10 +148,10 @@ export function GraphTab() {
   )
 
   // Tool nodes/edges are a *history-mode* concept now (issue #83): the live
-  // canvas never draws them — per-agent activity is revealed on click in
+  // graph never draws them — per-agent activity is revealed on click in
   // the anchored panel instead. Computed unconditionally (cheap, and the
   // "tool calls recorded" stat below still uses `activeToolCalls`), but
-  // only handed to GraphCanvas when `isHistory`.
+  // only handed to GraphFlow when `isHistory`.
   const toolNames = useMemo(() => {
     if (!isHistory) return []
     const seen = new Set<string>()
@@ -270,12 +271,12 @@ export function GraphTab() {
         <span className="graph-legend-item"><span className="graph-edge-swatch graph-edge-swatch--subagent" /> subagent link</span>
       </div>
       <p className="graph-hint">
-        Drag to pan, scroll/pinch to zoom
+        Drag a node to reposition it, drag the background to pan, scroll/pinch to zoom
         {isHistory ? ', click a node to inspect.' : ', click a running agent to see its actions.'}
       </p>
 
       {agentList.length === 0 ? (
-        // Same fixed-size frame as GraphCanvas's own `.graph-canvas-wrap`,
+        // Same fixed-size frame as GraphFlow's own `.graph-canvas-wrap`,
         // so a filter selection with no currently-visible agents shows the
         // "no agents" copy centered inside the panel instead of collapsing
         // it to a single line of text (issue #75).
@@ -300,7 +301,7 @@ export function GraphTab() {
           </p>
         </div>
       ) : (
-        <GraphCanvas
+        <GraphFlow
           allAgents={agentList}
           toolNames={toolNames}
           edges={edges}
@@ -310,8 +311,8 @@ export function GraphTab() {
           historyMode={isHistory}
           anchoredPanel={
             // Live mode only: the per-agent action panel, anchored over the
-            // selected node by GraphCanvas (issue #83). History mode keeps
-            // the slide-in AgentDrawer below instead.
+            // selected node by GraphFlow via <NodeToolbar> (issue #83/#87).
+            // History mode keeps the slide-in AgentDrawer below instead.
             !isHistory && selectedAgent && selectedAgent.status === 'running' ? (
               <GraphAgentPanel
                 agent={selectedAgent}
