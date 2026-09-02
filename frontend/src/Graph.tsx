@@ -38,6 +38,7 @@ import { GraphAgentPanel } from './graph/GraphAgentPanel'
 import { useEventTimeline } from './graph/useEventTimeline'
 import { reconstructStateAt } from './graph/history'
 import { Timeline } from './graph/Timeline'
+import { usePlayback } from './graph/usePlayback'
 import { computeVisibleAgentIds, useDashboardFilter } from './filterModel'
 import { STATUS_LEGEND, agentStatusLabel, type StatusFilter } from './agentStatus'
 
@@ -62,6 +63,21 @@ export function GraphTab() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(null)
   const { events: timelineEvents, earliestMs, latestMs } = useEventTimeline()
   const isHistory = scrubAtMs !== null
+
+  // History playback transport (issue #85). Drives `scrubAtMs` forward or
+  // backward over wall-clock time (rAF loop inside the hook) at 1×/5×/10×,
+  // re-running the `reconstructStateAt` memo below on each step. Local-only
+  // UI state — never synced over the WebSocket, same as `scrubAtMs` itself.
+  const playback = usePlayback({ scrubAtMs, earliestMs, latestMs, onScrub: setScrubAtMs })
+
+  // What the Timeline hands back for *manual* scrubs (drag or the Live
+  // button): a manual move always wins over automated playback (issue #85),
+  // so pause first, then apply the position. The playback loop calls
+  // `setScrubAtMs` directly and is unaffected by this wrapper.
+  const handleManualScrub = (ms: number | null) => {
+    playback.pause()
+    setScrubAtMs(ms)
+  }
   // The status filter is a no-op outside history mode — rather than reset it
   // on every mode switch (an effect), just ignore it while live. A value
   // set in history mode simply lies dormant and re-applies if the user
@@ -193,7 +209,13 @@ export function GraphTab() {
       <h2>Graph</h2>
 
       {hasTimeline && (
-        <Timeline earliestMs={earliestMs} latestMs={latestMs} scrubAtMs={scrubAtMs} onScrub={setScrubAtMs} />
+        <Timeline
+          earliestMs={earliestMs}
+          latestMs={latestMs}
+          scrubAtMs={scrubAtMs}
+          onScrub={handleManualScrub}
+          playback={playback}
+        />
       )}
 
       {/*

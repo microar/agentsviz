@@ -553,6 +553,57 @@
   color: #646cff;
 }
 
+/* History playback transport (issue #85) — shown only in history mode,
+   below the scrubber row. See frontend/src/graph/Timeline.tsx. */
+.graph-timeline-transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.graph-transport-btn {
+  appearance: none;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0.28rem 0.55rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.graph-transport-btn:hover {
+  border-color: #d97706;
+  color: #d97706;
+}
+
+.graph-transport-btn.is-active {
+  border-color: #d97706;
+  background: #d97706;
+  color: #fff;
+}
+
+.graph-transport-btn--play {
+  min-width: 5rem;
+}
+
+.graph-transport-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border, rgba(127, 127, 127, 0.3));
+}
+
+.graph-transport-dirs,
+.graph-transport-speeds {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
 .graph-timeline-status {
   margin-top: 0.5rem;
   font-size: 0.75rem;
