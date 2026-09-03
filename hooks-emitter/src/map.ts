@@ -166,7 +166,15 @@ function safeStringify(value: unknown): string | undefined {
 /**
  * Maps one hook payload to one AgentsViz event, or `null` if this hook
  * event type isn't one we emit for (anything besides SessionStart,
- * PreToolUse, PostToolUse, Stop, SubagentStop).
+ * PreToolUse, PostToolUse, SessionEnd, SubagentStop).
+ *
+ * Note `Stop` is intentionally NOT mapped (issue #88): Claude Code fires
+ * `Stop` at the end of every assistant turn, not when the session ends,
+ * so mapping it to `agent_stop` marked a live session `stopped` after its
+ * first turn and dropped it from the Graph live view. The real
+ * end-of-session hook is `SessionEnd`; a session that exits without one
+ * (window closed, process killed) is still covered by the server's
+ * stale-agent reaper.
  */
 export function mapHookPayload(payload: HookPayload, now: () => string = () => new Date().toISOString()): AgentEvent | null {
   const agentId = deriveAgentId(payload);
@@ -218,13 +226,20 @@ export function mapHookPayload(payload: HookPayload, now: () => string = () => n
     }
 
     case "Stop": {
+      // End of one assistant turn, not the session (issue #88). The
+      // session is still live and will keep emitting tool calls — do not
+      // stop the agent here. `SessionEnd` handles real termination.
+      return null;
+    }
+
+    case "SessionEnd": {
       return {
         type: "agent_stop",
         timestamp,
         agentId,
         ...(team ? { team } : {}),
         status: "success",
-        message: "Session stopped",
+        message: "Session ended",
       };
     }
 

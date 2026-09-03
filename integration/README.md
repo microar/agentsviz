@@ -101,12 +101,14 @@ exactly the way Claude Code's own harness drives a hook:
    functions directly — writing a realistic synthetic Claude Code hook
    payload to its stdin and letting it exit on its own, exactly as the
    Claude Code harness would invoke it.
-3. Drives a plausible single-session sequence covering all 4 mapped hook
-   types plus a Task-tool sub-agent delegation: `SessionStart` →
+3. Drives a plausible single-session sequence covering every mapped hook
+   type plus a Task-tool sub-agent delegation: `SessionStart` →
    `PreToolUse`/`PostToolUse` (Bash) → `PreToolUse` (Task, spawns a
    sub-agent) → `PreToolUse`/`PostToolUse` (Read, inside the sub-agent,
    carrying `agent_id`) → `SubagentStop` → `PostToolUse` (Task ends) →
-   `Stop`.
+   `Stop` (end of an assistant turn — maps to nothing, #88) →
+   `PreToolUse` (Bash again, proving the session is still live) →
+   `SessionEnd` (the session actually ends → `agent_stop`).
 4. For each hook firing, waits for the resulting event to arrive over the
    live WebSocket before sending the next one — this is also how the test
    observes HTTP-level acceptance, since the hook script's own contract
@@ -131,7 +133,12 @@ exactly the way Claude Code's own harness drives a hook:
   loudly if `hooks-emitter/src/map.ts`'s mapping ever drifts from the
   schema.
 - **Server-level acceptance**: 202-accepted count in the server's request
-  log matches the number of hooks fired.
+  log matches the number of fired hooks that map to an event (the bare
+  `Stop` maps to nothing, #88).
+- **`Stop` is not a lifecycle end (#88)**: a `Stop` hook mid-session
+  broadcasts nothing, a later tool call still lands on the same running
+  top-level agent, and the agent gets exactly one `agent_stop` — from
+  `SessionEnd`.
 - **Sub-agent correlation (#30)**: the sub-agent's events get a distinct,
   compound `agentId` (`${session_id}-${agent_id}`), a `caller` that links
   back to the parent session, and the same derived `team` as the parent

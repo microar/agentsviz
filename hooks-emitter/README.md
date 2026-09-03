@@ -19,12 +19,22 @@ exactly (also enforced by `server/src/eventSchema.ts`).
 | `SessionStart`     | `agent_start`        |
 | `PreToolUse`        | `tool_call_start`    |
 | `PostToolUse`       | `tool_call_end`      |
-| `Stop`               | `agent_stop`          |
+| `SessionEnd`        | `agent_stop`          |
 | `SubagentStop`      | `agent_stop`          |
 
 `agentId` is normally the hook payload's `session_id` — stable for the
 lifetime of one Claude Code session. Any other hook event
 (`Notification`, `PreCompact`, `PermissionDenied`, etc.) is ignored.
+
+**`Stop` is deliberately not mapped (issue #88).** Claude Code fires
+`Stop` at the end of *every* assistant turn, not when the session ends,
+so mapping it to `agent_stop` marked a still-active session `stopped`
+after its first turn and dropped it from the Graph tab's live view for
+the rest of the session. The end-of-session hook is `SessionEnd`; that is
+what stops the agent. A session that exits without a `SessionEnd` (window
+closed, process killed) is still reaped by the server's stale-agent
+liveness timeout. `SubagentStop` is unaffected — a sub-agent genuinely
+finishes there.
 
 ## Sub-agent hierarchies (Task tool) — `team` and `caller`
 
@@ -125,7 +135,7 @@ that variable):
         ]
       }
     ],
-    "Stop": [
+    "SessionEnd": [
       {
         "hooks": [
           { "type": "command", "command": "node /absolute/path/to/hooks-emitter/dist/index.js" }
@@ -145,7 +155,8 @@ that variable):
 
 The same script handles all five hooks — it reads `hook_event_name` from
 the stdin payload to decide what (if anything) to emit, so one command can
-be reused across every entry above.
+be reused across every entry above. Registering it for `Stop` as well is
+harmless (it emits nothing for that hook — issue #88), but pointless.
 
 By default events go to `http://localhost:4000/events`. Point them
 elsewhere by setting `AGENTSVIZ_EVENTS_URL` in the environment Claude Code

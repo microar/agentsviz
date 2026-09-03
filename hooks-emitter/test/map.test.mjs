@@ -153,14 +153,29 @@ assert.equal(
   assert.equal(result, "plain string output");
 }
 
-// --- Stop / SubagentStop -> agent_stop -----------------------------------
+// --- Stop -> nothing (issue #88) ---------------------------------------
+
+// Claude Code fires `Stop` at the end of every assistant turn, not when
+// the session ends. Mapping it to `agent_stop` marked a still-active
+// session `stopped` after its first turn and dropped it from the Graph
+// live view. `Stop` now emits nothing; `SessionEnd` stops the agent.
+assert.equal(
+  mapHookPayload({ session_id: "sess-1", hook_event_name: "Stop" }, fixedNow),
+  null,
+  "Stop produces nothing to emit — it is an end-of-turn marker, not session end",
+);
+
+// --- SessionEnd -> agent_stop -----------------------------------------
 
 {
-  const event = mapHookPayload({ session_id: "sess-1", hook_event_name: "Stop" }, fixedNow);
+  const event = mapHookPayload({ session_id: "sess-1", hook_event_name: "SessionEnd", reason: "exit" }, fixedNow);
   assert.equal(event.type, "agent_stop");
   assert.equal(event.status, "success");
   assert.equal(event.agentId, "sess-1");
+  assert.equal(event.message, "Session ended");
 }
+
+// --- SubagentStop -> agent_stop (unchanged) ---------------------------
 
 {
   const event = mapHookPayload(
@@ -301,7 +316,7 @@ assert.equal(
 assert.equal(
   mapHookPayload({ session_id: "sess-1", hook_event_name: "Notification" }, fixedNow),
   null,
-  "hook events outside the mapped 4 (+Stop/SubagentStop) produce nothing to emit",
+  "hook events outside the mapped set (SessionStart/PreToolUse/PostToolUse/SessionEnd/SubagentStop) produce nothing to emit",
 );
 
 console.log("hooks-emitter map tests passed");

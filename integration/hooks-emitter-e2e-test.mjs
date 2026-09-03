@@ -201,11 +201,33 @@ async function main() {
     return receivedEvents[before];
   }
 
+  /**
+   * Runs one hook payload through the real emitter and asserts it maps to
+   * NOTHING — the script exits 0 with no stderr and no event is broadcast
+   * over the live WebSocket. Used for `Stop`, which (issue #88) is an
+   * end-of-turn marker, not a lifecycle event.
+   */
+  async function emitHookExpectNoBroadcast(description, payload) {
+    const before = receivedEvents.length;
+    const { code, stderr } = await runHook(payload, hookEnv);
+    assert(code === 0, `hooks-emitter exits 0 for ${description} (got ${code})`);
+    assert(stderr.trim() === "", `hooks-emitter writes no stderr for ${description}`);
+    // Give any (erroneous) POST + broadcast time to land before asserting.
+    await sleep(750);
+    assert(
+      receivedEvents.length === before,
+      `${description} broadcasts no event (got ${receivedEvents.length - before} new)`,
+    );
+  }
+
   // A plausible session: top-level agent starts, calls a regular tool,
   // then delegates via the Task tool to a sub-agent, which itself calls a
-  // tool and finishes, then the top-level Task call ends and the session
-  // stops. Covers all 4 mapped hook types plus the #30 sub-agent
-  // correlation (agent_id present on hooks firing inside the sub-agent).
+  // tool and finishes, then the top-level Task call ends. A `Stop` hook
+  // fires (end of an assistant turn) and must NOT stop the session
+  // (issue #88); the session keeps working (another tool call) and only
+  // ends on `SessionEnd`. Covers all mapped hook types plus the #30
+  // sub-agent correlation (agent_id present on hooks firing inside the
+  // sub-agent).
 
   const eSessionStart = await emitHook("SessionStart (top-level agent starts)", {
     session_id: sessionId,
@@ -275,9 +297,30 @@ async function main() {
     cwd: projectCwd,
   });
 
-  const eStop = await emitHook("Stop (top-level session stops)", {
+  // End of an assistant turn — the session is still live. This must NOT
+  // produce an agent_stop (issue #88).
+  await emitHookExpectNoBroadcast("Stop (end of an assistant turn, session still active)", {
     session_id: sessionId,
     hook_event_name: "Stop",
+    last_assistant_message: "Turn complete.",
+    cwd: projectCwd,
+  });
+
+  // The session keeps working after the Stop: another tool call lands on
+  // the same, still-running top-level agent.
+  const ePostStopBashPreStart = await emitHook("PreToolUse Bash (after a Stop, session still active)", {
+    session_id: sessionId,
+    hook_event_name: "PreToolUse",
+    tool_name: "Bash",
+    tool_input: { command: "pwd" },
+    cwd: projectCwd,
+  });
+
+  // The session actually ends now.
+  const eSessionEnd = await emitHook("SessionEnd (top-level session actually ends)", {
+    session_id: sessionId,
+    hook_event_name: "SessionEnd",
+    reason: "exit",
     last_assistant_message: "Done.",
     cwd: projectCwd,
   });
@@ -326,8 +369,21 @@ async function main() {
   assert(eTaskPostEnd.type === "tool_call_end" && eTaskPostEnd.agentId === expectedAgentId, "Task PostToolUse -> tool_call_end back on the parent agentId");
   assert(eTaskPostEnd.status === "success", "Task tool_response maps to status success");
 
-  assert(eStop.type === "agent_stop" && eStop.agentId === expectedAgentId, "Stop -> agent_stop on the top-level agentId");
-  assert(eStop.status === "success" && eStop.message === "Session stopped", "Stop maps to status success with the expected message");
+  assert(
+    ePostStopBashPreStart.type === "tool_call_start" && ePostStopBashPreStart.agentId === expectedAgentId,
+    "a tool call after a Stop still maps onto the same top-level agent — the Stop did not end the session (#88)",
+  );
+
+  assert(eSessionEnd.type === "agent_stop" && eSessionEnd.agentId === expectedAgentId, "SessionEnd -> agent_stop on the top-level agentId");
+  assert(eSessionEnd.status === "success" && eSessionEnd.message === "Session ended", "SessionEnd maps to status success with the expected message");
+
+  // #88: no agent_stop for the top-level agent should exist until
+  // SessionEnd — a Stop after every turn must never have stopped it.
+  const parentStops = receivedEvents.filter((e) => e.type === "agent_stop" && e.agentId === expectedAgentId);
+  assert(
+    parentStops.length === 1 && parentStops[0] === eSessionEnd,
+    `the top-level agent gets exactly one agent_stop, from SessionEnd (got ${parentStops.length})`,
+  );
 
   console.log("== Step 5: assert causal ordering (sub-agent bracketed inside the Task tool call) ==");
   const idxOf = (predicate) => receivedEvents.findIndex(predicate);
@@ -344,8 +400,8 @@ async function main() {
   console.log("== Step 6: assert the server's HTTP-level acceptance (202) for every hook-derived POST ==");
   const acceptedCount = (serverOutput.match(/POST \/events 202/g) || []).length;
   assert(
-    acceptedCount === 9,
-    `server logged 9 "POST /events 202" acceptances, one per hook fired in Step 3 (got ${acceptedCount})`,
+    acceptedCount === 10,
+    `server logged 10 "POST /events 202" acceptances — one per hook fired in Step 3 that maps to an event (the bare Stop maps to nothing, #88) (got ${acceptedCount})`,
   );
 
   console.log("== Step 7: reconnect and assert the final state snapshot ==");

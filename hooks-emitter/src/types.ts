@@ -60,9 +60,26 @@ export interface PostToolUsePayload extends BaseHookPayload {
   tool_response?: unknown;
 }
 
+/**
+ * `Stop` fires every time the main agent finishes a response turn — many
+ * times over the life of one session — NOT when the session ends. This
+ * package deliberately does not map it to `agent_stop` (issue #88): doing
+ * so marked a still-active session `stopped` after its first turn and
+ * dropped it from the Graph live view. The real "session is over" signal
+ * is `SessionEnd` (below).
+ */
 export interface StopPayload extends BaseHookPayload {
   hook_event_name: "Stop";
   last_assistant_message?: string;
+}
+
+/**
+ * `SessionEnd` fires once, when a Claude Code session actually terminates
+ * (issue #88). This is what maps to `agent_stop` for a top-level session.
+ */
+export interface SessionEndPayload extends BaseHookPayload {
+  hook_event_name: "SessionEnd";
+  reason?: string;
 }
 
 export interface SubagentStopPayload extends BaseHookPayload {
@@ -77,6 +94,7 @@ export type HookPayload =
   | PreToolUsePayload
   | PostToolUsePayload
   | StopPayload
+  | SessionEndPayload
   | SubagentStopPayload;
 
 // --- Event envelope (see /docs/event-schema.md) ---------------------------
