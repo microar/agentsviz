@@ -1,8 +1,17 @@
+/*
+ * Full-bleed layout: the shell fills the viewport width (no centered
+ * max-width column) and stretches to the full `#root` column height so the
+ * tab panel — the graph canvas especially — gets the whole screen.
+ */
 .app-shell {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 2.5rem 1.5rem 4rem;
+  width: 100%;
+  margin: 0;
+  padding: 2rem 2rem 2.5rem;
   text-align: left;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .app-header {
@@ -95,6 +104,9 @@
    */
   min-height: max(640px, calc(60vh + 220px));
   background: rgba(127, 127, 127, 0.05);
+  /* Grow to fill the full-bleed shell's remaining height (issue #77 floor
+   * still applies as the minimum). */
+  flex: 1;
 }
 
 .tab-panel h2 {
