@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /**
  * Claude Code hook entry point. Register this script against
- * PreToolUse / PostToolUse / SessionStart / Stop / SubagentStop (see
- * README.md for a sample .claude/settings.json block).
+ * PreToolUse / PostToolUse / SessionStart / SessionEnd / SubagentStop
+ * (see README.md for a sample .claude/settings.json block). It can also
+ * be registered for `Stop` harmlessly — that hook maps to nothing
+ * (issue #88) — but there is no reason to.
  *
  * Contract this script MUST uphold (see issue #29):
  *   - Never throw, never let a rejected promise escape.
