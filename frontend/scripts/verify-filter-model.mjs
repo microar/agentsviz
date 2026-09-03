@@ -18,11 +18,13 @@
 import {
   ALL_SESSIONS,
   ALL_TEAMS,
+  EMPTY_SEEN_SCOPES,
   agentInSession,
   computeVisibleAgentIds,
   isRootAgent,
   listSessionRoots,
   listTeams,
+  recordSeenScopes,
   resolveSelection,
 } from '../src/filterModel.ts'
 
@@ -133,6 +135,42 @@ eq(
   resolveSelection({ team: 'alpha', sessionRoot: 'alpha-root-1' }, agents),
   { team: 'alpha', sessionRoot: 'alpha-root-1' },
 )
+
+// --- seen-scopes registry (finished runs stay selectable) ----------
+// Snapshot the scopes visible in the mixed store above...
+const seen1 = recordSeenScopes(EMPTY_SEEN_SCOPES, agents)
+eq('recordSeenScopes captures every team', seen1.teams, ['alpha', 'beta'])
+eq('recordSeenScopes captures alpha roots', seen1.rootsByTeam.alpha, ['alpha-root-1', 'alpha-root-2'])
+check(
+  'recordSeenScopes returns prev identity when nothing new',
+  recordSeenScopes(seen1, agents) === seen1,
+)
+
+// ...then simulate the store having lost every alpha agent (server
+// restart / :memory: DB / log buffer eviction). The live derivation now
+// sees only beta, but the dropdowns must still offer alpha + its roots.
+const betaOnly = Object.fromEntries(
+  Object.entries(agents).filter(([, a]) => a.team === 'beta'),
+)
+eq('listTeams unions in a team no longer in the store', listTeams(betaOnly, [], seen1), ['alpha', 'beta'])
+eq(
+  'listSessionRoots unions in roots for a team no longer in the store',
+  listSessionRoots('alpha', betaOnly, [], seen1),
+  ['alpha-root-1', 'alpha-root-2'],
+)
+eq(
+  'resolveSelection keeps a persisted selection whose scope is only in `seen`',
+  resolveSelection({ team: 'alpha', sessionRoot: 'alpha-root-1' }, betaOnly, [], seen1),
+  { team: 'alpha', sessionRoot: 'alpha-root-1' },
+)
+eq(
+  'resolveSelection still drops a scope in neither the store nor `seen`',
+  resolveSelection({ team: 'ghost-team', sessionRoot: 'x' }, betaOnly, [], seen1),
+  { team: ALL_TEAMS, sessionRoot: ALL_SESSIONS },
+)
+// A later observation of a brand-new team merges without dropping the old.
+const seen2 = recordSeenScopes(seen1, { g1: agent('g1', 'gamma') })
+eq('recordSeenScopes merges new team, keeps old', seen2.teams, ['alpha', 'beta', 'gamma'])
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`)
