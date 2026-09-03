@@ -11,8 +11,8 @@
  * time. `Graph.tsx` re-runs `reconstructStateAt` on every `scrubAtMs` change,
  * so the graph animates through history as the position moves.
  *
- * Follows the same ref-driven rAF pattern as `GraphCanvas` / `useCanvasCamera`
- * (issue #40): everything the loop needs — bounds, speed, direction, the
+ * Follows a ref-driven rAF pattern (carried over from the issue #40 canvas
+ * renderer): everything the loop needs — bounds, speed, direction, the
  * float position accumulator — lives in refs it reads directly, so changing
  * speed or direction mid-play never tears the loop down, and the loop never
  * forces a React re-render beyond the throttled `onScrub` position emit.

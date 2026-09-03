@@ -17,7 +17,7 @@
  * strips the types), and so all three tabs share one implementation of
  * "root agent + session membership" rather than re-deriving it.
  *
- * "Root agent" mirrors the negation of `graph/fade.ts`'s `isSubAgent`: an
+ * "Root agent" mirrors the negation of `graph/graphModel.ts`'s `isSubAgent`: an
  * agent is a root unless its `caller` names another *known* agent. A
  * session is that root plus every agent that belongs to it — by the
  * hooks-emitter `${session_id}-${agent_id}` id scheme, or by its `caller`
@@ -33,6 +33,90 @@ export const ALL_TEAMS = '__all_teams__'
 export const ALL_SESSIONS = '__all_sessions__'
 
 const STORAGE_KEY = 'agentsviz:dashboard-filter'
+const SEEN_STORAGE_KEY = 'agentsviz:seen-scopes'
+
+/**
+ * Every team, and every session root within each team, this browser has
+ * *ever* observed — accumulated across reloads and never pruned.
+ *
+ * The live derivation (`listTeams` / `listSessionRoots` straight off the
+ * store) only knows about scopes still present in the current state, so a
+ * team drops out of the dropdown the moment its last agent ages out of the
+ * client's view: the store keeps stopped agents, but not across a server
+ * restart / `:memory:` event DB, and the 500-entry `logs` ring buffer
+ * evicts the team tag for log-only agentIds. The user's ask (a finished
+ * run's team must stay selectable) needs a source of truth that outlives
+ * all of that — this registry, unioned into both dropdowns.
+ */
+export interface SeenScopes {
+  /** Every distinct team ever seen, sorted. */
+  teams: string[]
+  /** team -> every root agentId ever seen under it, sorted. */
+  rootsByTeam: Record<string, string[]>
+}
+
+export const EMPTY_SEEN_SCOPES: SeenScopes = { teams: [], rootsByTeam: {} }
+
+function unionSorted(a: readonly string[], b: readonly string[]): string[] {
+  return [...new Set([...a, ...b])].sort((x, y) => x.localeCompare(y))
+}
+
+/**
+ * Folds the scopes visible in the current store state into `prev`,
+ * returning a new `SeenScopes` (or `prev` unchanged when nothing is new,
+ * so callers can use it as a memo identity). Pure — persistence is the
+ * caller's job.
+ */
+export function recordSeenScopes(
+  prev: SeenScopes,
+  agents: Record<string, AgentState>,
+  logs: readonly TeamTaggedEntry[] = [],
+): SeenScopes {
+  const liveTeams = listTeams(agents, logs)
+  let changed = false
+
+  const teams = unionSorted(prev.teams, liveTeams)
+  if (teams.length !== prev.teams.length) changed = true
+
+  const rootsByTeam: Record<string, string[]> = { ...prev.rootsByTeam }
+  for (const team of teams) {
+    const merged = unionSorted(prev.rootsByTeam[team] ?? [], listSessionRoots(team, agents, logs))
+    if (merged.length !== (prev.rootsByTeam[team]?.length ?? 0)) {
+      rootsByTeam[team] = merged
+      changed = true
+    }
+  }
+
+  return changed ? { teams, rootsByTeam } : prev
+}
+
+/** Reads the persisted seen-scopes registry; tolerates absent/corrupt storage. */
+export function loadSeenScopes(): SeenScopes {
+  try {
+    const raw = window.localStorage.getItem(SEEN_STORAGE_KEY)
+    if (!raw) return EMPTY_SEEN_SCOPES
+    const parsed = JSON.parse(raw) as Partial<SeenScopes>
+    const teams = Array.isArray(parsed.teams) ? parsed.teams.filter((t) => typeof t === 'string') : []
+    const rootsByTeam: Record<string, string[]> = {}
+    if (parsed.rootsByTeam && typeof parsed.rootsByTeam === 'object') {
+      for (const [team, roots] of Object.entries(parsed.rootsByTeam)) {
+        if (Array.isArray(roots)) rootsByTeam[team] = roots.filter((r) => typeof r === 'string')
+      }
+    }
+    return { teams: unionSorted(teams, []), rootsByTeam }
+  } catch {
+    return EMPTY_SEEN_SCOPES
+  }
+}
+
+/** Persists the seen-scopes registry; a `localStorage` failure is swallowed. */
+export function saveSeenScopes(seen: SeenScopes): void {
+  try {
+    window.localStorage.setItem(SEEN_STORAGE_KEY, JSON.stringify(seen))
+  } catch {
+    // no-op — private mode / storage disabled / quota
+  }
+}
 
 /** Minimal shape the derivation needs off a log line — `LogEntry` satisfies it. */
 export interface TeamTaggedEntry {
@@ -88,13 +172,18 @@ export function teamByAgentId(
   return map
 }
 
-/** Distinct teams currently known, sorted — options for the Team dropdown. */
+/**
+ * Teams for the Team dropdown, sorted. Every team currently in the store,
+ * unioned with `seen.teams` (every team this browser has ever observed) so
+ * a finished run's team stays selectable after its agents leave the store.
+ */
 export function listTeams(
   agents: Record<string, AgentState>,
   logs: readonly TeamTaggedEntry[] = [],
+  seen: SeenScopes = EMPTY_SEEN_SCOPES,
 ): string[] {
   const teams = new Set(teamByAgentId(agents, logs).values())
-  return [...teams].sort((a, b) => a.localeCompare(b))
+  return unionSorted([...teams], seen.teams)
 }
 
 /**
@@ -102,7 +191,7 @@ export function listTeams(
  * self-referential `caller`, or a `caller` that isn't itself a known agent
  * (e.g. the instrumentation library's default `caller: "user"`). A log-only
  * agentId with no record is treated as a root. Mirrors the negation of
- * `graph/fade.ts`'s `isSubAgent`.
+ * `graph/graphModel.ts`'s `isSubAgent`.
  */
 export function isRootAgent(
   agentId: string,
@@ -122,6 +211,7 @@ export function listSessionRoots(
   team: string,
   agents: Record<string, AgentState>,
   logs: readonly TeamTaggedEntry[] = [],
+  seen: SeenScopes = EMPTY_SEEN_SCOPES,
 ): string[] {
   if (team === ALL_TEAMS) return []
   const byId = teamByAgentId(agents, logs)
@@ -130,7 +220,9 @@ export function listSessionRoots(
   for (const [agentId, agentTeam] of byId) {
     if (agentTeam === team && isRootAgent(agentId, agents, knownAgentIds)) roots.push(agentId)
   }
-  return roots.sort((a, b) => a.localeCompare(b))
+  // Union with every root ever seen under this team (see SeenScopes) so a
+  // past session stays selectable once its agents have left the store.
+  return unionSorted(roots, seen.rootsByTeam[team] ?? [])
 }
 
 /**
@@ -193,11 +285,13 @@ export function resolveSelection(
   raw: FilterSelection,
   agents: Record<string, AgentState>,
   logs: readonly TeamTaggedEntry[] = [],
+  seen: SeenScopes = EMPTY_SEEN_SCOPES,
 ): FilterSelection {
-  const team = raw.team !== ALL_TEAMS && listTeams(agents, logs).includes(raw.team) ? raw.team : ALL_TEAMS
+  const team =
+    raw.team !== ALL_TEAMS && listTeams(agents, logs, seen).includes(raw.team) ? raw.team : ALL_TEAMS
   if (team === ALL_TEAMS) return DEFAULT_SELECTION
   const sessionRoot =
-    raw.sessionRoot !== ALL_SESSIONS && listSessionRoots(team, agents, logs).includes(raw.sessionRoot)
+    raw.sessionRoot !== ALL_SESSIONS && listSessionRoots(team, agents, logs, seen).includes(raw.sessionRoot)
       ? raw.sessionRoot
       : ALL_SESSIONS
   return { team, sessionRoot }

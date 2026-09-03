@@ -1,14 +1,12 @@
 /**
  * Anchored per-agent action panel for the *live* Graph tab (issue #83).
  *
- * The live Graph canvas no longer draws per-agent activity (tool calls, MCP
- * calls, logs, errors) as persistent nodes/edges — instead, clicking a
- * running agent reveals that activity on demand in this panel, which
- * `GraphCanvas` positions on top of the clicked node in screen space (its
- * render loop writes a `transform: translate(...)` every frame using the
- * same camera projection the canvas hit-detection uses, so the panel tracks
- * the node as the camera pans/zooms). An `X` (or Escape) closes it;
- * clicking another agent retargets it.
+ * The live Graph no longer draws per-agent activity (tool calls, MCP calls,
+ * logs, errors) as persistent nodes/edges — instead, clicking a running
+ * agent reveals that activity on demand in this panel, which `GraphFlow`
+ * anchors on the clicked node with React Flow's `<NodeToolbar>` (issue #87;
+ * it tracks the node through pan/zoom for free). An `X` (or Escape) closes
+ * it; clicking another agent retargets it.
  *
  * The body is `AgentDetailBody` from `AgentDrawer.tsx`, shared verbatim with
  * the history-mode side drawer so the two render agent activity identically.

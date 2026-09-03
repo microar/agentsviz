@@ -1,8 +1,17 @@
+/*
+ * Full-bleed layout: the shell fills the viewport width (no centered
+ * max-width column) and stretches to the full `#root` column height so the
+ * tab panel — the graph canvas especially — gets the whole screen.
+ */
 .app-shell {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 2.5rem 1.5rem 4rem;
+  width: 100%;
+  margin: 0;
+  padding: 2rem 2rem 2.5rem;
   text-align: left;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .app-header {
@@ -95,6 +104,9 @@
    */
   min-height: max(640px, calc(60vh + 220px));
   background: rgba(127, 127, 127, 0.05);
+  /* Grow to fill the full-bleed shell's remaining height (issue #77 floor
+   * still applies as the minimum). */
+  flex: 1;
 }
 
 .tab-panel h2 {
@@ -372,13 +384,12 @@
   color: var(--color-text-muted, #6b7280);
 }
 
-/* Canvas-based graph (issue #40) — see frontend/src/graph/GraphCanvas.tsx.
-   All per-node/per-edge status styling (running pulse, stopped/error/stale
-   colors, pending-call dashes, fade-out-on-stop from #37/#39) is now drawn
-   directly onto the canvas each frame (see graph/colors.ts, draw-agents.ts,
-   draw-edges.ts, fade.ts) rather than expressed as CSS classes — the rules
-   below only cover the wrapper/canvas element itself and the visually
-   hidden keyboard/screen-reader fallback list of agents.  */
+/* React Flow graph (issue #87) — see frontend/src/graph/GraphFlow.tsx.
+   Replaces the issue #40 Canvas 2D renderer. `.graph-canvas-wrap` is kept
+   as the fixed 60vh frame (and its #43 history border / #75 placeholder
+   variants); `.graph-flow` scopes the React Flow instance and the custom
+   node cards below. Per-status colours still come from graph/colors.ts
+   (`agentColors`) via the node components, not from these classes. */
 .graph-canvas-wrap {
   position: relative;
   width: 100%;
@@ -422,33 +433,104 @@
   padding: 0 1.5rem;
 }
 
-.graph-canvas-el {
-  display: block;
-  width: 100%;
-  height: 100%;
-  cursor: grab;
+/* React Flow instance (issue #87). `.graph-flow` shares the element with
+   `.graph-canvas-wrap` (the fixed 60vh frame) — the ReactFlow component is
+   sized 100% of that frame inline. The library's own stylesheet is imported
+   in GraphFlow.tsx; these rules only theme it to the dashboard and hide the
+   connection handles (the graph is not user-connectable — edges are derived
+   from store state, never drawn by dragging between handles). */
+.graph-flow .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
 }
 
-.graph-canvas-el:active {
-  cursor: grabbing;
+.graph-flow .react-flow__attribution {
+  font-size: 0.6rem;
+  opacity: 0.5;
 }
 
-/* Anchored per-agent action panel (issue #83) — a normal DOM child of
-   `.graph-canvas-wrap` that GraphCanvas's render loop positions on top of
-   the selected node every frame via `transform: translate(...)`, using the
-   same camera projection as canvas hit-detection so it tracks the node
-   through pan/zoom. Replaces the slide-in AgentDrawer for the *live* Graph
-   tab; history mode still uses the drawer. */
-.graph-anchored-panel {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 5;
-  width: min(360px, calc(100% - 16px));
-  will-change: transform;
-  /* Hidden until GraphCanvas's render loop places it on the node next
-     frame, so it never flashes at the wrapper's top-left corner first. */
-  visibility: hidden;
+/* Custom node cards (graph/GraphNodes.tsx) — replace the canvas
+   draw-agents.ts / draw-tool-nodes.ts routines. Border colour / fill /
+   dashed outline are set inline from `agentColors()`; layout + the running
+   pulse live here. */
+.graph-node {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  border: 2px solid rgba(127, 127, 127, 0.5);
+  border-radius: 10px;
+  padding: 8px 12px;
+  min-width: 120px;
+  max-width: 220px;
+  font-family: var(--mono);
+  background: var(--bg);
+  color: var(--text-h);
+  box-shadow: var(--shadow);
+}
+
+.graph-node--agent.is-selected {
+  outline: 2px solid #646cff;
+  outline-offset: 2px;
+}
+
+.graph-node--running {
+  animation: graph-node-pulse 1.6s ease-in-out infinite;
+}
+
+/* Mirrors the removed canvas sine pulse (draw-agents.ts, PULSE_PERIOD_MS
+   1600) — a subtle indigo halo on running agents. */
+@keyframes graph-node-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(100, 108, 255, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(100, 108, 255, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-node--running {
+    animation: none;
+  }
+}
+
+.graph-node--tool {
+  min-width: 88px;
+  border-radius: 6px;
+  border-color: rgba(127, 127, 127, 0.55);
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.graph-node--tool-active {
+  border-color: #d97706;
+  background: rgba(217, 119, 6, 0.16);
+}
+
+.graph-node-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.graph-node-sub {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.graph-node-team {
+  font-size: 0.65rem;
+  color: var(--text);
+}
+
+/* Anchored per-agent action panel (issue #83) — rendered inside React
+   Flow's `<NodeToolbar>` (issue #87), which positions it on top of the
+   selected node and tracks it through pan/zoom. Replaces the slide-in
+   AgentDrawer for the *live* Graph tab; history mode still uses the drawer. */
+.react-flow__node-toolbar .graph-agent-panel {
+  width: min(360px, 90vw);
 }
 
 .graph-agent-panel {

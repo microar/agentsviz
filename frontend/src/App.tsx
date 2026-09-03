@@ -3,7 +3,7 @@ import './App.css'
 import { EventStoreProvider, useEventStore } from './store'
 import { GraphTab } from './Graph'
 import { TeamsTab } from './Teams'
-import { agentLabel } from './graph/layout'
+import { agentLabel } from './graph/labels'
 import {
   ALL_SESSIONS,
   ALL_TEAMS,
@@ -12,8 +12,11 @@ import {
   listSessionRoots,
   listTeams,
   loadPersistedSelection,
+  loadSeenScopes,
+  recordSeenScopes,
   resolveSelection,
   savePersistedSelection,
+  saveSeenScopes,
   useDashboardFilter,
   type DashboardFilterValue,
   type FilterSelection,
@@ -57,18 +60,32 @@ function DashboardFilterProvider({ children }: { children: ReactNode }) {
     savePersistedSelection(raw)
   }, [raw])
 
+  // Every team/session root this browser has ever seen (issue: a finished
+  // run's team must stay selectable). Seeded from localStorage so it
+  // survives reloads and server restarts, then grown during render via the
+  // React "adjust state while rendering" pattern — `recordSeenScopes`
+  // returns the same identity when nothing is new, so the guarded setState
+  // can't loop.
+  const [seen, setSeen] = useState(loadSeenScopes)
+  const nextSeen = recordSeenScopes(seen, agents, logs)
+  if (nextSeen !== seen) setSeen(nextSeen)
+
+  useEffect(() => {
+    saveSeenScopes(seen)
+  }, [seen])
+
   const value = useMemo<DashboardFilterValue>(() => {
-    const resolved = resolveSelection(raw, agents, logs)
+    const resolved = resolveSelection(raw, agents, logs, seen)
     return {
       ...resolved,
-      teams: listTeams(agents, logs),
-      sessionRoots: listSessionRoots(resolved.team, agents, logs),
+      teams: listTeams(agents, logs, seen),
+      sessionRoots: listSessionRoots(resolved.team, agents, logs, seen),
       // Changing the team always drops back to "All sessions" — a root from
       // the previous team is meaningless under the new one.
       setTeam: (team: string) => setRaw({ team, sessionRoot: ALL_SESSIONS }),
       setSessionRoot: (sessionRoot: string) => setRaw((prev) => ({ ...prev, sessionRoot })),
     }
-  }, [raw, agents, logs])
+  }, [raw, agents, logs, seen])
 
   return <DashboardFilterContext.Provider value={value}>{children}</DashboardFilterContext.Provider>
 }
