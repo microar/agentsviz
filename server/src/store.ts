@@ -33,6 +33,30 @@ export interface AgentState {
   inferred?: true;
 }
 
+/**
+ * Running token/cost totals (#55). Every field defaults to `0` rather
+ * than being optional — unlike the event-level fields these are derived
+ * from (see eventSchema.ts), a *total* of zero contributions is a
+ * perfectly meaningful value ("no cost data reported yet"), so there's no
+ * "unknown" state to distinguish here the way there is on a single event.
+ */
+export interface CostTotals {
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+}
+
+function zeroCostTotals(): CostTotals {
+  return { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+}
+
+/** Aggregate spend, broken down by agent/team, plus a session-wide running total (#55). */
+export interface SpendSnapshot {
+  byAgent: Record<string, CostTotals>;
+  byTeam: Record<string, CostTotals>;
+  total: CostTotals;
+}
+
 export type ToolCallStatus = "pending" | "success" | "error";
 
 export interface ToolCallState {
@@ -53,6 +77,8 @@ export interface StateSnapshot {
   agents: AgentState[];
   toolCalls: ToolCallState[];
   teams: Record<string, string[]>;
+  /** Aggregate token/cost spend (#55) — see `SpendSnapshot`. */
+  spend: SpendSnapshot;
 }
 
 /**
@@ -107,6 +133,14 @@ export class StateStore {
   // envelope, since a "log"/"error"/tool-call event is just as good
   // evidence of life as agent_start/agent_stop.
   private lastActivityAt = new Map<string, number>();
+  // Aggregate token/cost spend (#55), keyed by agentId / team. Rebuilt
+  // incrementally the same way everything else here is: applyEvent is
+  // replayed in order (live, or from the persisted event log on startup),
+  // so these totals always reflect exactly the events applied so far —
+  // no separate "recompute from scratch" path to keep in sync.
+  private costByAgent = new Map<string, CostTotals>();
+  private costByTeam = new Map<string, CostTotals>();
+  private totalCost: CostTotals = zeroCostTotals();
 
   /** Update state from a single accepted event. */
   applyEvent(event: AgentEvent): void {
@@ -150,6 +184,7 @@ export class StateStore {
 
   private applyAgentStop(event: Extract<AgentEvent, { type: "agent_stop" }>): void {
     const existing = this.agents.get(event.agentId);
+    const team = event.team ?? existing?.team;
     // agent_stop marks the agent stopped in place — it is never removed
     // from the store, even if we've never seen an agent_start for it.
     // This is a clean, explicit stop, so `inferred` is not set even if the
@@ -159,7 +194,7 @@ export class StateStore {
     this.agents.set(event.agentId, {
       agentId: event.agentId,
       status: "stopped",
-      team: event.team ?? existing?.team,
+      team,
       // Prefer an already-known caller, but fall back to the one on the
       // event itself. A Claude Code sub-agent never emits `agent_start`
       // (no SessionStart hook fires for it), so `agent_stop` is often the
@@ -173,6 +208,45 @@ export class StateStore {
       stopStatus: event.status,
       stopMessage: event.message,
     });
+    this.recordCost(event.agentId, team, event);
+  }
+
+  /**
+   * Folds any of `tokensIn`/`tokensOut`/`costUsd` present on an
+   * `agent_stop` or `tool_call_end` event into the running totals (#55).
+   * A no-op when none of the three fields are present — most events. Each
+   * present field is added independently (a `tokensIn`-only event still
+   * contributes to `costByAgent`/`costByTeam`/`totalCost`, just leaving
+   * `tokensOut`/`costUsd` at their prior value).
+   */
+  private recordCost(
+    agentId: string,
+    team: string | undefined,
+    delta: { tokensIn?: number; tokensOut?: number; costUsd?: number },
+  ): void {
+    if (delta.tokensIn === undefined && delta.tokensOut === undefined && delta.costUsd === undefined) {
+      return;
+    }
+    const tokensIn = delta.tokensIn ?? 0;
+    const tokensOut = delta.tokensOut ?? 0;
+    const costUsd = delta.costUsd ?? 0;
+
+    const addTo = (map: Map<string, CostTotals>, key: string): void => {
+      const current = map.get(key) ?? zeroCostTotals();
+      map.set(key, {
+        tokensIn: current.tokensIn + tokensIn,
+        tokensOut: current.tokensOut + tokensOut,
+        costUsd: current.costUsd + costUsd,
+      });
+    };
+
+    addTo(this.costByAgent, agentId);
+    if (team) addTo(this.costByTeam, team);
+    this.totalCost = {
+      tokensIn: this.totalCost.tokensIn + tokensIn,
+      tokensOut: this.totalCost.tokensOut + tokensOut,
+      costUsd: this.totalCost.costUsd + costUsd,
+    };
   }
 
   /** Records that an event bearing this agentId was just accepted. */
@@ -233,6 +307,12 @@ export class StateStore {
 
   private applyToolCallEnd(event: Extract<AgentEvent, { type: "tool_call_end" }>): void {
     this.noteAgentFromToolCall(event);
+    // Resolve the team the same way `noteAgentFromToolCall` just did (the
+    // agent record now carries it if either the event or a prior record
+    // had one), so cost aggregation and the agent/tool-call state agree
+    // on which team this call belongs to.
+    const team = this.agents.get(event.agentId)?.team ?? event.team;
+    this.recordCost(event.agentId, team, event);
     const key = toolCallKey(event.agentId, event.tool, event.caller);
     const callId = this.pendingByKey.get(key);
     const existing = callId ? this.toolCalls.get(callId) : undefined;
@@ -326,6 +406,11 @@ export class StateStore {
       agents: Array.from(this.agents.values()),
       toolCalls: Array.from(this.toolCalls.values()),
       teams: this.buildTeams(),
+      spend: {
+        byAgent: Object.fromEntries(this.costByAgent),
+        byTeam: Object.fromEntries(this.costByTeam),
+        total: this.totalCost,
+      },
     };
   }
 }

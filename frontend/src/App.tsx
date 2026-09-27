@@ -3,6 +3,7 @@ import './App.css'
 import { EventStoreProvider, useEventStore } from './store'
 import { GraphTab } from './Graph'
 import { TeamsTab } from './Teams'
+import { SpendTab } from './Spend'
 import { agentLabel } from './graph/labels'
 import {
   ALL_SESSIONS,
@@ -22,12 +23,13 @@ import {
   type FilterSelection,
 } from './filterModel'
 
-type TabId = 'graph' | 'logs' | 'teams'
+type TabId = 'graph' | 'logs' | 'teams' | 'spend'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'graph', label: 'Graph' },
   { id: 'logs', label: 'Logs' },
   { id: 'teams', label: 'Teams' },
+  { id: 'spend', label: 'Spend' },
 ]
 
 function ConnectionBadge() {
@@ -237,6 +239,7 @@ const TAB_COMPONENTS: Record<TabId, ComponentType> = {
   graph: GraphTab,
   logs: LogsTab,
   teams: TeamsTab,
+  spend: SpendTab,
 }
 
 function DashboardShell() {

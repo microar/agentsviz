@@ -22,6 +22,9 @@
  *    tool + caller) in place rather than appending a duplicate, and folds
  *    `caller`/`team` onto the agent record the same way.
  *  - `log` / `error` are appended to a capped rolling log list.
+ *  - `agent_stop` / `tool_call_end` carrying `tokensIn`/`tokensOut`/
+ *    `costUsd` (#55) add them to per-agent, per-team and session totals,
+ *    exactly as `StateStore.recordCost` does on the server.
  *
  * The snapshot message is handled separately from live events: the server
  * (`server/src/store.ts`) sends already-derived `AgentState[]` /
@@ -45,9 +48,11 @@ import {
   isLifecycleEvent,
   isSnapshotMessage,
   type AgentState,
+  type CostTotals,
   type LifecycleEvent,
   type LogEntry,
   type SnapshotToolCall,
+  type SpendState,
   type ToolCallState,
 } from './types'
 
@@ -69,7 +74,12 @@ export interface EventStoreState {
   logs: LogEntry[]
   /** Raw events observed live since this tab's WS connection was established. */
   rawEvents: LifecycleEvent[]
+  /** Aggregate token/cost spend (#55), seeded from the snapshot then updated per event. */
+  spend: SpendState
 }
+
+const ZERO_COST: CostTotals = { tokensIn: 0, tokensOut: 0, costUsd: 0 }
+const EMPTY_SPEND: SpendState = { byAgent: {}, byTeam: {}, total: ZERO_COST }
 
 /** Exported for the history/timeline scrubber (issue #43) — see `useEventTimeline.ts`. */
 export const initialState: EventStoreState = {
@@ -78,11 +88,12 @@ export const initialState: EventStoreState = {
   toolCalls: [],
   logs: [],
   rawEvents: [],
+  spend: EMPTY_SPEND,
 }
 
 type Action =
   | { kind: 'status'; status: ConnectionStatus }
-  | { kind: 'snapshot'; agents: AgentState[]; toolCalls: ToolCallState[] }
+  | { kind: 'snapshot'; agents: AgentState[]; toolCalls: ToolCallState[]; spend: SpendState }
   | { kind: 'event'; event: LifecycleEvent }
 
 let logIdCounter = 0
@@ -242,6 +253,37 @@ function applyToolCallEnd(toolCalls: ToolCallState[], event: LifecycleEvent): To
   return next
 }
 
+function addCost(current: CostTotals | undefined, delta: CostTotals): CostTotals {
+  const base = current ?? ZERO_COST
+  return {
+    tokensIn: base.tokensIn + delta.tokensIn,
+    tokensOut: base.tokensOut + delta.tokensOut,
+    costUsd: base.costUsd + delta.costUsd,
+  }
+}
+
+/**
+ * Folds an event's optional `tokensIn`/`tokensOut`/`costUsd` (#55) into the
+ * running totals. No-op (same identity) when none are present. Mirrors
+ * `StateStore.recordCost` in server/src/store.ts — `team` must be resolved
+ * by the caller the same way the server does.
+ */
+function recordCost(spend: SpendState, event: LifecycleEvent, team: string | undefined): SpendState {
+  if (event.tokensIn === undefined && event.tokensOut === undefined && event.costUsd === undefined) {
+    return spend
+  }
+  const delta: CostTotals = {
+    tokensIn: event.tokensIn ?? 0,
+    tokensOut: event.tokensOut ?? 0,
+    costUsd: event.costUsd ?? 0,
+  }
+  return {
+    byAgent: { ...spend.byAgent, [event.agentId]: addCost(spend.byAgent[event.agentId], delta) },
+    byTeam: team ? { ...spend.byTeam, [team]: addCost(spend.byTeam[team], delta) } : spend.byTeam,
+    total: addCost(spend.total, delta),
+  }
+}
+
 function applyLogOrError(logs: LogEntry[], event: LifecycleEvent): LogEntry[] {
   const entry: LogEntry = {
     id: `log-${logIdCounter++}-${event.timestamp}`,
@@ -269,19 +311,29 @@ export function applyEvent(state: EventStoreState, event: LifecycleEvent): Event
     case 'agent_start':
       return { ...state, agents: applyAgentStart(state.agents, event) }
     case 'agent_stop':
-      return { ...state, agents: applyAgentStop(state.agents, event) }
+      return {
+        ...state,
+        agents: applyAgentStop(state.agents, event),
+        // Same team resolution as the server's applyAgentStop.
+        spend: recordCost(state.spend, event, event.team ?? state.agents[event.agentId]?.team),
+      }
     case 'tool_call_start':
       return {
         ...state,
         agents: noteAgentFromToolCall(state.agents, event),
         toolCalls: applyToolCallStart(state.toolCalls, event),
       }
-    case 'tool_call_end':
+    case 'tool_call_end': {
+      const agents = noteAgentFromToolCall(state.agents, event)
       return {
         ...state,
-        agents: noteAgentFromToolCall(state.agents, event),
+        agents,
         toolCalls: applyToolCallEnd(state.toolCalls, event),
+        // Team from the just-updated agent record first, then the event —
+        // same as the server's applyToolCallEnd.
+        spend: recordCost(state.spend, event, agents[event.agentId]?.team ?? event.team),
       }
+    }
     case 'log':
     case 'error':
       return { ...state, logs: applyLogOrError(state.logs, event) }
@@ -303,7 +355,7 @@ function reducer(state: EventStoreState, action: Action): EventStoreState {
         action.toolCalls.length > MAX_TOOL_CALLS
           ? action.toolCalls.slice(action.toolCalls.length - MAX_TOOL_CALLS)
           : action.toolCalls
-      return { ...state, agents, toolCalls }
+      return { ...state, agents, toolCalls, spend: action.spend }
     }
     case 'event': {
       const next = applyEvent(state, action.event)
@@ -343,6 +395,7 @@ export function EventStoreProvider({ children, wsUrl }: EventStoreProviderProps)
             kind: 'snapshot',
             agents: data.data.agents,
             toolCalls: data.data.toolCalls.map(toolCallStateFromSnapshot),
+            spend: data.data.spend ?? EMPTY_SPEND,
           })
           return
         }

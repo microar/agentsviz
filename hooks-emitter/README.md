@@ -36,6 +36,20 @@ closed, process killed) is still reaped by the server's stale-agent
 liveness timeout. `SubagentStop` is unaffected — a sub-agent genuinely
 finishes there.
 
+## Token usage (issue #55, best-effort)
+
+Hook payloads carry no token or cost fields. On `SessionEnd` and
+`SubagentStop`, this script reads the transcript the payload points at
+(`transcript_path`, or the sub-agent's `agent_transcript_path`), sums the
+assistant messages' `usage` blocks, and adds `tokensIn` / `tokensOut` to
+the `agent_stop` event. `tokensIn` includes cache-read and cache-creation
+input tokens. No `costUsd` is reported: transcripts don't carry it, and
+this package does not estimate it from prices. For the main session only
+main-thread turns count (`isSidechain` entries are skipped), so sub-agent
+tokens aren't counted twice. Older Claude Code versions that don't send
+`agent_transcript_path` get no sub-agent usage. Any read or parse problem
+just leaves the fields off.
+
 ## Sub-agent hierarchies (Task tool) — `team` and `caller`
 
 Claude Code hook payloads don't have a native "team" or "caller" concept,

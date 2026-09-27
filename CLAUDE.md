@@ -32,7 +32,7 @@ independently; root `package.json` only provides `npm run dev`.
   reaped and marked `stopped` with `inferred: true`.
 - `frontend/` — React 19 + Vite. Self-reconnecting WS client (`ws.ts`),
   event store (`store.tsx`), tabs: Graph (canvas renderer under
-  `src/graph/`), Logs, Teams.
+  `src/graph/`), Logs, Teams, Spend (token/cost, #55).
 - `instrumentation/` — fire-and-forget helper library agents import
   (`agentStart`, `agentStop`, `toolCallStart`/`End`, `withToolCall`,
   `log`, `error`). Dispatch failures are swallowed — never throws into

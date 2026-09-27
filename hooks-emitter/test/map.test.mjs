@@ -5,7 +5,13 @@
 // server/src/eventSchema.ts), matching the lightweight test style used by
 // instrumentation/smoke-test.mjs.
 import assert from "node:assert/strict";
-import { classifyToolResponse, mapHookPayload, parseHookPayload } from "../dist/map.js";
+import {
+  classifyToolResponse,
+  extractUsage,
+  mapHookPayload,
+  parseHookPayload,
+  summarizeTranscriptUsage,
+} from "../dist/map.js";
 
 const fixedNow = () => "2026-08-25T00:00:00.000Z";
 
@@ -318,5 +324,83 @@ assert.equal(
   null,
   "hook events outside the mapped set (SessionStart/PreToolUse/PostToolUse/SessionEnd/SubagentStop) produce nothing to emit",
 );
+
+// --- Token/cost extraction (#55) -------------------------------------------
+
+assert.deepEqual(extractUsage(undefined), {}, "non-object -> no cost fields");
+assert.deepEqual(extractUsage({ stdout: "hi" }), {}, "ordinary tool output -> no cost fields");
+assert.deepEqual(
+  extractUsage({
+    usage: { input_tokens: 10, cache_read_input_tokens: 5, cache_creation_input_tokens: 1, output_tokens: 7 },
+    total_cost_usd: 0.02,
+  }),
+  { tokensIn: 16, tokensOut: 7, costUsd: 0.02 },
+  "Anthropic usage block: cache tokens count toward tokensIn",
+);
+assert.deepEqual(
+  extractUsage({ usage: { input_tokens: -1, output_tokens: "7" } }),
+  {},
+  "invalid numbers are ignored, not passed through to fail server validation",
+);
+
+{
+  const withUsage = mapHookPayload(
+    {
+      session_id: "sess-1",
+      hook_event_name: "PostToolUse",
+      tool_name: "mcp__llm__complete",
+      tool_response: { text: "ok", usage: { input_tokens: 3, output_tokens: 4 } },
+    },
+    fixedNow,
+  );
+  assert.equal(withUsage.tokensIn, 3);
+  assert.equal(withUsage.tokensOut, 4);
+
+  const plain = mapHookPayload(
+    { session_id: "sess-1", hook_event_name: "PostToolUse", tool_name: "Bash", tool_response: { stdout: "" } },
+    fixedNow,
+  );
+  for (const key of ["tokensIn", "tokensOut", "costUsd"]) {
+    assert.equal(key in plain, false, `${key} omitted when the tool response has no usage`);
+  }
+
+  const task = mapHookPayload(
+    {
+      session_id: "sess-1",
+      hook_event_name: "PostToolUse",
+      tool_name: "Task",
+      tool_response: { content: "done", usage: { input_tokens: 100, output_tokens: 50 } },
+    },
+    fixedNow,
+  );
+  assert.equal("tokensIn" in task, false, "Task tool usage is the sub-agent's; counted at SubagentStop instead");
+}
+
+{
+  const transcript = [
+    JSON.stringify({ type: "user", message: { role: "user", content: "hi" } }),
+    // Two lines for the same API message (one per content block) — counted once.
+    JSON.stringify({ type: "assistant", message: { id: "m1", usage: { input_tokens: 10, output_tokens: 1 } } }),
+    JSON.stringify({ type: "assistant", message: { id: "m1", usage: { input_tokens: 10, output_tokens: 5 } } }),
+    JSON.stringify({
+      type: "assistant",
+      message: { id: "m2", usage: { input_tokens: 20, cache_read_input_tokens: 80, output_tokens: 3 } },
+    }),
+    JSON.stringify({ type: "assistant", isSidechain: true, message: { id: "s1", usage: { input_tokens: 999, output_tokens: 999 } } }),
+    "{not json",
+    "",
+  ].join("\n");
+  assert.deepEqual(summarizeTranscriptUsage(transcript, { excludeSidechain: true }), { tokensIn: 110, tokensOut: 8 });
+  assert.deepEqual(summarizeTranscriptUsage(transcript), { tokensIn: 1109, tokensOut: 1007 });
+  assert.deepEqual(summarizeTranscriptUsage(""), {}, "empty transcript -> no cost fields");
+  assert.deepEqual(
+    summarizeTranscriptUsage(JSON.stringify({ type: "assistant", costUSD: 0.5, message: { id: "x", usage: { output_tokens: 2 } } })),
+    { tokensOut: 2, costUsd: 0.5 },
+    "per-entry costUSD is picked up when a transcript carries it",
+  );
+
+  const stop = mapHookPayload({ session_id: "sess-1", hook_event_name: "SessionEnd" }, fixedNow);
+  assert.equal("tokensIn" in stop, false, "SessionEnd with no usage on the payload carries no cost fields");
+}
 
 console.log("hooks-emitter map tests passed");

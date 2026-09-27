@@ -248,3 +248,107 @@ test("an existing caller is never overwritten by a later tool call", () => {
   const stored = store.getSnapshot().agents.find((a) => a.agentId === "sub-x");
   assert.equal(stored?.caller, "parent-a");
 });
+
+// ---------------------------------------------------------------------------
+// Token/cost aggregation (#55)
+// ---------------------------------------------------------------------------
+
+function toolCallEndWithCost(
+  agentId: string,
+  timestamp: number,
+  cost: { tokensIn?: number; tokensOut?: number; costUsd?: number },
+  team?: string,
+): AgentEvent {
+  return {
+    type: "tool_call_end",
+    timestamp: new Date(timestamp).toISOString(),
+    agentId,
+    tool: "search",
+    status: "success",
+    ...(team ? { team } : {}),
+    ...cost,
+  };
+}
+
+test("spend starts at zero with empty breakdowns", () => {
+  const { spend } = new StateStore().getSnapshot();
+  assert.deepEqual(spend, { byAgent: {}, byTeam: {}, total: { tokensIn: 0, tokensOut: 0, costUsd: 0 } });
+});
+
+test("tool_call_end and agent_stop costs aggregate per agent, per team, and in total", () => {
+  const store = new StateStore();
+  store.applyEvent({ type: "agent_start", timestamp: new Date(START).toISOString(), agentId: "a", team: "red" });
+  store.applyEvent(toolCallEndWithCost("a", START + 1000, { tokensIn: 100, tokensOut: 50, costUsd: 0.01 }));
+  store.applyEvent(toolCallEndWithCost("a", START + 2000, { tokensIn: 10, costUsd: 0.002 }));
+  store.applyEvent({
+    type: "agent_stop",
+    timestamp: new Date(START + 3000).toISOString(),
+    agentId: "a",
+    status: "success",
+    tokensIn: 5,
+    tokensOut: 5,
+    costUsd: 0.5,
+  });
+
+  const { spend } = store.getSnapshot();
+  assert.equal(spend.byAgent.a.tokensIn, 115);
+  assert.equal(spend.byAgent.a.tokensOut, 55);
+  assert.ok(Math.abs(spend.byAgent.a.costUsd - 0.512) < 1e-9);
+  assert.deepEqual(spend.byTeam.red, spend.byAgent.a, "team resolved from the agent record");
+  assert.deepEqual(spend.total, spend.byAgent.a);
+});
+
+test("events without cost fields leave spend untouched", () => {
+  const store = new StateStore();
+  store.applyEvent(agentStart("a", START));
+  store.applyEvent(logEvent("a", START + 1000));
+  store.applyEvent({
+    type: "tool_call_end",
+    timestamp: new Date(START + 2000).toISOString(),
+    agentId: "a",
+    tool: "search",
+    status: "success",
+  });
+  store.applyEvent({ type: "agent_stop", timestamp: new Date(START + 3000).toISOString(), agentId: "a", status: "success" });
+
+  const { spend } = store.getSnapshot();
+  assert.deepEqual(spend.byAgent, {});
+  assert.deepEqual(spend.byTeam, {});
+  assert.deepEqual(spend.total, { tokensIn: 0, tokensOut: 0, costUsd: 0 });
+});
+
+test("spend is kept separate per team; agents without a team only count toward byAgent/total", () => {
+  const store = new StateStore();
+  store.applyEvent(toolCallEndWithCost("a1", START, { costUsd: 1 }, "red"));
+  store.applyEvent(toolCallEndWithCost("a2", START + 1, { costUsd: 2 }, "red"));
+  store.applyEvent(toolCallEndWithCost("b1", START + 2, { costUsd: 4 }, "blue"));
+  store.applyEvent(toolCallEndWithCost("solo", START + 3, { costUsd: 8 }));
+
+  const { spend } = store.getSnapshot();
+  assert.equal(spend.byTeam.red.costUsd, 3);
+  assert.equal(spend.byTeam.blue.costUsd, 4);
+  assert.deepEqual(Object.keys(spend.byTeam).sort(), ["blue", "red"]);
+  assert.equal(spend.byAgent.solo.costUsd, 8);
+  assert.equal(spend.total.costUsd, 15);
+});
+
+test("replaying the same events into a fresh store yields identical spend", () => {
+  const events: AgentEvent[] = [
+    { type: "agent_start", timestamp: new Date(START).toISOString(), agentId: "a", team: "red" },
+    toolCallEndWithCost("a", START + 1000, { tokensIn: 7, tokensOut: 3, costUsd: 0.25 }),
+    toolCallEndWithCost("b", START + 2000, { tokensOut: 11 }, "blue"),
+    {
+      type: "agent_stop",
+      timestamp: new Date(START + 3000).toISOString(),
+      agentId: "a",
+      status: "error",
+      costUsd: 0.75,
+    },
+  ];
+  const first = new StateStore();
+  const second = new StateStore();
+  for (const e of events) first.applyEvent(e);
+  for (const e of events) second.applyEvent(e);
+  assert.deepEqual(second.getSnapshot().spend, first.getSnapshot().spend);
+  assert.equal(first.getSnapshot().spend.total.costUsd, 1);
+});

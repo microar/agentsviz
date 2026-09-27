@@ -29,9 +29,11 @@
  */
 
 import { spawn } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { mapHookPayload, parseHookPayload } from "./map.js";
+import { mapHookPayload, parseHookPayload, summarizeTranscriptUsage } from "./map.js";
+import type { AgentEvent, CostFields, HookPayload } from "./types.js";
 import { describeFailure, postEvent, resolveEventsUrl } from "./emit.js";
 
 async function readStdin(): Promise<string> {
@@ -86,6 +88,33 @@ async function runCheck(): Promise<number> {
   return 0;
 }
 
+/** Skip absurdly large transcripts rather than stall the hook reading them. */
+const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Best-effort token usage for an agent_stop (#55), read from the JSONL
+ * transcript the hook payload points at: the sub-agent's own
+ * `agent_transcript_path` for SubagentStop, the session's
+ * `transcript_path` (main-thread entries only) for SessionEnd. Returns `{}`
+ * on any problem — missing path, unreadable/oversized file, no usage.
+ */
+function transcriptUsage(payload: HookPayload): CostFields {
+  try {
+    const isSubagent = payload.hook_event_name === "SubagentStop";
+    const file = isSubagent ? payload.agent_transcript_path : payload.transcript_path;
+    if (typeof file !== "string" || !file) return {};
+    if (statSync(file).size > MAX_TRANSCRIPT_BYTES) return {};
+    return summarizeTranscriptUsage(readFileSync(file, "utf8"), { excludeSidechain: !isSubagent });
+  } catch {
+    return {};
+  }
+}
+
+function withTranscriptUsage(event: AgentEvent, payload: HookPayload): AgentEvent {
+  if (event.type !== "agent_stop") return event;
+  return { ...event, ...transcriptUsage(payload) };
+}
+
 async function run(): Promise<void> {
   const raw = await readStdin();
   if (!raw.trim()) return;
@@ -100,8 +129,9 @@ async function run(): Promise<void> {
   const payload = parseHookPayload(parsedBody);
   if (!payload) return;
 
-  const event = mapHookPayload(payload);
-  if (!event) return;
+  const mapped = mapHookPayload(payload);
+  if (!mapped) return;
+  const event = withTranscriptUsage(mapped, payload);
 
   dispatchToSender(JSON.stringify(event));
 }
