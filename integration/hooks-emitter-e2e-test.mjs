@@ -24,6 +24,8 @@ import { createServer } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = path.resolve(__dirname, "../server");
@@ -229,6 +231,27 @@ async function main() {
   // sub-agent correlation (agent_id present on hooks firing inside the
   // sub-agent).
 
+  // Token usage (#55): Claude Code hook payloads carry no usage, but
+  // SessionEnd/SubagentStop point at JSONL transcripts whose assistant
+  // entries do. Write small realistic transcripts so the real hook script
+  // reads them from disk and reports token counts on agent_stop.
+  const transcriptDir = mkdtempSync(path.join(tmpdir(), "agentsviz-hooks-e2e-"));
+  const assistantLine = (id, usage, extra = {}) =>
+    JSON.stringify({ type: "assistant", ...extra, message: { id, role: "assistant", usage } });
+  const mainTranscript = path.join(transcriptDir, "session.jsonl");
+  writeFileSync(
+    mainTranscript,
+    [
+      JSON.stringify({ type: "user", message: { role: "user", content: "explore" } }),
+      assistantLine("msg_1", { input_tokens: 100, cache_read_input_tokens: 900, output_tokens: 20 }),
+      assistantLine("msg_1", { input_tokens: 100, cache_read_input_tokens: 900, output_tokens: 20 }), // same message, 2nd content block
+      assistantLine("msg_2", { input_tokens: 50, output_tokens: 30 }),
+      assistantLine("msg_side", { input_tokens: 7777, output_tokens: 7777 }, { isSidechain: true }), // sub-agent turn, excluded
+    ].join("\n") + "\n",
+  );
+  const subTranscript = path.join(transcriptDir, "agent-sub.jsonl");
+  writeFileSync(subTranscript, assistantLine("msg_s1", { input_tokens: 300, output_tokens: 40 }, { isSidechain: true }) + "\n");
+
   const eSessionStart = await emitHook("SessionStart (top-level agent starts)", {
     session_id: sessionId,
     hook_event_name: "SessionStart",
@@ -287,6 +310,7 @@ async function main() {
     agent_type: "Explore",
     cwd: projectCwd,
     last_assistant_message: "Explored the codebase.",
+    agent_transcript_path: subTranscript,
   });
 
   const eTaskPostEnd = await emitHook("PostToolUse Task (top-level, success)", {
@@ -323,7 +347,9 @@ async function main() {
     reason: "exit",
     last_assistant_message: "Done.",
     cwd: projectCwd,
+    transcript_path: mainTranscript,
   });
+  rmSync(transcriptDir, { recursive: true, force: true });
 
   console.log("== Step 4: assert each broadcast event was mapped correctly ==");
 
@@ -446,6 +472,21 @@ async function main() {
     finalSnapshot.teams[expectedTeam]?.includes(expectedAgentId) &&
       finalSnapshot.teams[expectedTeam]?.includes(expectedSubAgentId),
     `parent and sub-agent are both grouped under team "${expectedTeam}" in the snapshot (basename(cwd) derivation, #30)`,
+  );
+
+  // #55: token usage read from the transcripts written in Step 3.
+  assert(
+    eSessionEnd.tokensIn === 1050 && eSessionEnd.tokensOut === 50 && !("costUsd" in eSessionEnd),
+    `SessionEnd agent_stop carries main-thread transcript usage, de-duplicated, sidechain excluded, no guessed cost (got ${JSON.stringify({ tokensIn: eSessionEnd.tokensIn, tokensOut: eSessionEnd.tokensOut, costUsd: eSessionEnd.costUsd })})`,
+  );
+  assert(
+    eSubagentStop.tokensIn === 300 && eSubagentStop.tokensOut === 40,
+    `SubagentStop agent_stop carries the sub-agent transcript usage (got ${eSubagentStop.tokensIn}/${eSubagentStop.tokensOut})`,
+  );
+  const spend = finalSnapshot.spend;
+  assert(
+    spend?.byAgent?.[expectedAgentId]?.tokensIn === 1050 && spend?.byAgent?.[expectedSubAgentId]?.tokensOut === 40,
+    `snapshot spend attributes transcript tokens to parent and sub-agent separately (got ${JSON.stringify({ parent: spend?.byAgent?.[expectedAgentId], sub: spend?.byAgent?.[expectedSubAgentId] })})`,
   );
 
   console.log("== Step 8: unreachable server -> hooks-emitter still exits 0 with no stderr (#29 acceptance criteria) ==");

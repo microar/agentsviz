@@ -1032,3 +1032,109 @@
   font-size: 0.72rem;
   color: var(--color-text-muted, #6b7280);
 }
+
+/* --- Spend tab (issue #55) ------------------------------------------------ */
+
+.spend-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.spend-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.03);
+  padding: 0.75rem 1rem;
+}
+
+.spend-tile-label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.spend-tile-value {
+  font-size: 1.4rem;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+.spend-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.spend-section {
+  margin-top: 1rem;
+  overflow-x: auto;
+}
+
+.spend-section h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+
+.spend-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.spend-table th,
+.spend-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.15);
+  text-align: left;
+}
+
+.spend-table thead th {
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.spend-name {
+  font-weight: 500;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spend-sublabel {
+  margin-left: 0.5rem;
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.spend-table .spend-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.spend-bar-col {
+  width: 30%;
+  min-width: 80px;
+}
+
+.spend-bar-track {
+  height: 10px;
+  display: flex;
+  align-items: center;
+}
+
+.spend-bar {
+  height: 8px;
+  background: var(--accent);
+  border-radius: 0 4px 4px 0;
+}

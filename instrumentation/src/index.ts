@@ -15,6 +15,7 @@
 
 import type {
   AgentEvent,
+  CostFields,
   ErrorEvent,
   Status,
 } from "./types.js";
@@ -23,6 +24,7 @@ export type {
   AgentEvent,
   AgentStartEvent,
   AgentStopEvent,
+  CostFields,
   EventType,
   ErrorEvent,
   LogEvent,
@@ -147,6 +149,20 @@ function dispatch(event: AgentEvent, cfg: ReturnType<typeof resolveConfig>): voi
   }
 }
 
+/**
+ * Picks only the defined token/cost fields (#55) so an event never carries
+ * `tokensIn: undefined` etc. — emitters that don't supply cost data produce
+ * exactly the same payload as before.
+ */
+function costFields(source: CostFields | undefined): CostFields {
+  if (!source) return {};
+  const out: CostFields = {};
+  if (source.tokensIn !== undefined) out.tokensIn = source.tokensIn;
+  if (source.tokensOut !== undefined) out.tokensOut = source.tokensOut;
+  if (source.costUsd !== undefined) out.costUsd = source.costUsd;
+  return out;
+}
+
 function requireAgentId(cfg: ReturnType<typeof resolveConfig>): string {
   if (!cfg.agentId) {
     throw new Error(
@@ -161,7 +177,7 @@ export interface AgentStartOptions extends InstrumentationConfig {
   caller?: string;
 }
 
-export interface AgentStopOptions extends InstrumentationConfig {
+export interface AgentStopOptions extends InstrumentationConfig, CostFields {
   status: Status;
   message?: string;
 }
@@ -172,13 +188,29 @@ export interface ToolCallStartOptions extends InstrumentationConfig {
   input: Record<string, unknown>;
 }
 
-export interface ToolCallEndOptions extends InstrumentationConfig {
+export interface ToolCallEndOptions extends InstrumentationConfig, CostFields {
   caller: string;
   tool: string;
   status: Status;
   result?: unknown;
   message?: string;
 }
+
+/**
+ * Options for `withToolCall`. Token/cost (#55) can be supplied statically
+ * (`tokensIn`/`tokensOut`/`costUsd`, when known up front) and/or derived
+ * from the wrapped call's result via `usage` — e.g. reading an LLM
+ * response's `usage` block. Values returned by `usage` win over the static
+ * ones. `usage` is only consulted on success; a throwing `usage` is
+ * swallowed (the event is still sent, just without the derived fields).
+ */
+export type WithToolCallOptions<T> = {
+  caller: string;
+  tool: string;
+  input: Record<string, unknown>;
+  usage?: (result: T) => CostFields | undefined;
+} & CostFields &
+  InstrumentationConfig;
 
 export interface LogOptions extends InstrumentationConfig {
   message: string;
@@ -204,10 +236,7 @@ export interface Instrumentation {
   log(message: string, options?: InstrumentationConfig): void;
   error(message: string, options?: ErrorOptions): void;
   /** Wraps a tool/sub-agent call, emitting tool_call_start before and tool_call_end after. */
-  withToolCall<T>(
-    options: { caller: string; tool: string; input: Record<string, unknown> } & InstrumentationConfig,
-    fn: () => Promise<T> | T,
-  ): Promise<T>;
+  withToolCall<T>(options: WithToolCallOptions<T>, fn: () => Promise<T> | T): Promise<T>;
 }
 
 export function createInstrumentation(initial: InstrumentationConfig = {}): Instrumentation {
@@ -243,6 +272,7 @@ export function createInstrumentation(initial: InstrumentationConfig = {}): Inst
         ...(cfg.team ? { team: cfg.team } : {}),
         status: options.status,
         ...(options.message ? { message: options.message } : {}),
+        ...costFields(options),
       };
       dispatch(event, cfg);
     },
@@ -275,6 +305,7 @@ export function createInstrumentation(initial: InstrumentationConfig = {}): Inst
           ? { result: options.result }
           : {}),
         ...(options.status === "error" && options.message ? { message: options.message } : {}),
+        ...costFields(options),
       };
       dispatch(event, cfg);
     },
@@ -305,15 +336,21 @@ export function createInstrumentation(initial: InstrumentationConfig = {}): Inst
       dispatch(event, cfg);
     },
 
-    async withToolCall<T>(
-      options: { caller: string; tool: string; input: Record<string, unknown> } & InstrumentationConfig,
-      fn: () => Promise<T> | T,
-    ): Promise<T> {
-      const { caller, tool, input, ...rest } = options;
+    async withToolCall<T>(options: WithToolCallOptions<T>, fn: () => Promise<T> | T): Promise<T> {
+      const { caller, tool, input, usage, tokensIn, tokensOut, costUsd, ...rest } = options;
+      const staticCost = costFields({ tokensIn, tokensOut, costUsd });
       this.toolCallStart({ caller, tool, input, ...rest });
       try {
         const result = await fn();
-        this.toolCallEnd({ caller, tool, status: "success", result, ...rest });
+        let derived: CostFields = {};
+        if (usage) {
+          try {
+            derived = costFields(usage(result));
+          } catch {
+            // Never let a buggy usage extractor break the agent's call.
+          }
+        }
+        this.toolCallEnd({ caller, tool, status: "success", result, ...rest, ...staticCost, ...derived });
         return result;
       } catch (err) {
         this.toolCallEnd({
@@ -322,6 +359,7 @@ export function createInstrumentation(initial: InstrumentationConfig = {}): Inst
           status: "error",
           message: err instanceof Error ? err.message : String(err),
           ...rest,
+          ...staticCost,
         });
         throw err;
       }

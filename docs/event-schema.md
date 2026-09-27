@@ -90,6 +90,9 @@ type).
 | `result`    | `any`                | `tool_call_end` only | The tool's return value on success. May be a string, object, array, or number depending on the tool. Omitted when the call errored (see `status`/`message` instead) or on event types other than `tool_call_end`. |
 | `status`    | `string` (enum)      | `tool_call_end`, `agent_stop`, `error` | Outcome of the event. For `tool_call_end` and `agent_stop`: `"success"` or `"error"`. For `error`: always `"error"`. Omitted on `agent_start`, `tool_call_start`, and `log`, which don't carry an outcome. |
 | `message`   | `string`             | `log`, `error` (required); others optional | Free-text human-readable message. Required on `log` (the log line content) and `error` (the error description). May optionally appear on `agent_stop` to give a human-readable stop reason. Omitted elsewhere. |
+| `tokensIn`  | `number`             | `agent_stop`, `tool_call_end` only | Input/prompt tokens consumed, if the emitter has this data (issue #55). Non-negative finite number. Omitted when unknown — never `0` as a stand-in for "not tracked". |
+| `tokensOut` | `number`             | `agent_stop`, `tool_call_end` only | Output/completion tokens produced, if known. Same rules as `tokensIn`. |
+| `costUsd`   | `number`             | `agent_stop`, `tool_call_end` only | Dollar cost attributed to this event, if known. Non-negative finite number. |
 
 ### Notes on shared fields
 
@@ -103,6 +106,56 @@ type).
   fields as "not applicable" rather than an error, and should tolerate
   additional fields being added to the envelope over time (forward
   compatible).
+
+### Token/cost tracking (`tokensIn` / `tokensOut` / `costUsd`, issue #55)
+
+There is no first-class place in the schema to say what an agent run (or
+one tool/model call within it) actually cost, even though this is usually
+the first thing anyone running LLM agents in production wants visibility
+into. `tokensIn`, `tokensOut`, and `costUsd` fill that gap. All three are
+optional — an emitter with no cost data stays perfectly valid without
+them — and, when present, must be non-negative finite numbers (validated
+the same way other typed fields are, see `server/src/eventSchema.ts`).
+
+They're accepted at two granularities, and an emitter can use either,
+both, or neither:
+
+- **`tool_call_end`** — the cost of one tool/model call. The natural
+  granularity when an agent tracks usage per LLM call it makes (e.g. a
+  `withToolCall`-wrapped call to a model API that returns a usage block).
+- **`agent_stop`** — the cost of the run as a whole. The natural
+  granularity when only a cumulative total is available (e.g. an SDK that
+  tracks total session usage but doesn't expose it per call).
+
+Consumers (the server's `StateStore`, the frontend store) treat every
+occurrence as an independent, additive contribution to a running total —
+they do not attempt to reconcile a run-level `agent_stop` total against
+the sum of its `tool_call_end`s. An emitter reporting both should make
+sure it isn't double-counting the same spend at both granularities (e.g.
+report per-call costs via `tool_call_end` XOR one cumulative total via
+`agent_stop`, not both for the same underlying spend).
+
+`instrumentation/`'s `agentStop()`, `toolCallEnd()` and `withToolCall()`
+accept these fields directly and pass them through only when defined
+(`withToolCall` also takes a `usage(result)` extractor, e.g. to read an
+LLM response's usage block). This is the path that can report real USD
+cost.
+
+`hooks-emitter/` is best-effort. Claude Code hook payloads
+([code.claude.com/docs/en/hooks](https://code.claude.com/docs/en/hooks))
+carry no token/cost fields themselves, but `SessionEnd` and `SubagentStop`
+point at the JSONL transcript (`transcript_path` / `agent_transcript_path`)
+whose assistant entries carry the Anthropic API `usage` block. On those
+hooks `hooks-emitter` reads the transcript and reports `tokensIn` (input +
+cache-creation + cache-read input tokens) and `tokensOut` on `agent_stop`
+— the session's main-thread turns for `SessionEnd`, the sub-agent's own
+transcript for `SubagentStop` — de-duplicating repeated lines of one API
+message. It does **not** report `costUsd` (transcripts don't carry it and
+estimating it from a price table would present a guess as data), and it
+skips any `usage` in the `Task`/`Agent` tool's `PostToolUse` response,
+since that sub-agent spend is already attributed at `SubagentStop`.
+Older harnesses without `agent_transcript_path` simply report no
+sub-agent usage.
 
 ## Event types
 
@@ -129,7 +182,9 @@ Emitted once when an agent instance finishes running, whether it
 completed successfully, was cancelled, or failed.
 
 **Fields used:** `type`, `timestamp`, `agentId`, `team` (optional),
-`caller` (optional), `status`, `message` (optional).
+`caller` (optional), `status`, `message` (optional), `tokensIn`
+(optional), `tokensOut` (optional), `costUsd` (optional — see "Token/cost
+tracking" below).
 
 ```json
 {
@@ -138,7 +193,10 @@ completed successfully, was cancelled, or failed.
   "agentId": "researcher-7f3a",
   "team": "research-team",
   "status": "success",
-  "message": "Completed task with 3 sources gathered"
+  "message": "Completed task with 3 sources gathered",
+  "tokensIn": 4200,
+  "tokensOut": 850,
+  "costUsd": 0.0623
 }
 ```
 
@@ -231,7 +289,9 @@ proximity in time (or a shared call id if the emitter provides one as an
 additional field).
 
 **Fields used:** `type`, `timestamp`, `agentId`, `caller`, `tool`,
-`result` (on success), `status`, `message` (on error), `team` (optional).
+`result` (on success), `status`, `message` (on error), `team` (optional),
+`tokensIn` (optional), `tokensOut` (optional), `costUsd` (optional — see
+"Token/cost tracking" below).
 
 Success:
 
@@ -248,7 +308,10 @@ Success:
     "results": [
       { "title": "Event schema design patterns", "url": "https://example.com/a" }
     ]
-  }
+  },
+  "tokensIn": 512,
+  "tokensOut": 128,
+  "costUsd": 0.0091
 }
 ```
 
@@ -372,6 +435,9 @@ emitted. See [`/SECURITY.md`](../SECURITY.md).
 | `result`    | – | – | – | on success | – | – |
 | `status`    | – | required | – | required | – | required (`"error"`) |
 | `message`   | – | optional | – | on error | required | required |
+| `tokensIn`  | – | optional | – | optional | – | – |
+| `tokensOut` | – | optional | – | optional | – | – |
+| `costUsd`   | – | optional | – | optional | – | – |
 
 ## Open questions for reviewers
 

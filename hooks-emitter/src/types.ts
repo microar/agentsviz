@@ -86,6 +86,11 @@ export interface SubagentStopPayload extends BaseHookPayload {
   hook_event_name: "SubagentStop";
   agent_id?: string;
   agent_type?: string;
+  /**
+   * The sub-agent's own transcript (JSONL), present on newer harness
+   * versions. Read best-effort for token usage (#55) — see index.ts.
+   */
+  agent_transcript_path?: string;
   last_assistant_message?: string;
 }
 
@@ -101,6 +106,17 @@ export type HookPayload =
 
 export type Status = "success" | "error";
 
+/**
+ * Optional token/cost accounting (#55) on `agent_stop` / `tool_call_end`.
+ * Omitted entirely when unknown — see map.ts's `extractUsage` and
+ * `summarizeTranscriptUsage` for how hooks-emitter fills these in.
+ */
+export interface CostFields {
+  tokensIn?: number;
+  tokensOut?: number;
+  costUsd?: number;
+}
+
 export type AgentEvent =
   | {
       type: "agent_start";
@@ -109,7 +125,7 @@ export type AgentEvent =
       team?: string;
       caller?: string;
     }
-  | {
+  | ({
       type: "agent_stop";
       timestamp: string;
       agentId: string;
@@ -120,7 +136,7 @@ export type AgentEvent =
       caller?: string;
       status: Status;
       message?: string;
-    }
+    } & CostFields)
   | {
       type: "tool_call_start";
       timestamp: string;
@@ -130,7 +146,7 @@ export type AgentEvent =
       tool: string;
       input: Record<string, unknown>;
     }
-  | {
+  | ({
       type: "tool_call_end";
       timestamp: string;
       agentId: string;
@@ -140,4 +156,4 @@ export type AgentEvent =
       status: Status;
       result?: unknown;
       message?: string;
-    };
+    } & CostFields);

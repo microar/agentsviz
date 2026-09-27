@@ -71,4 +71,49 @@ await new Promise((resolve) => setTimeout(resolve, 500));
 
 assert.equal(unhandled, null, `expected no unhandled rejection, got: ${unhandled}`);
 
+// Token/cost fields (#55): stub fetch to capture payloads and check that
+// cost fields pass through when supplied and are absent (not `undefined`
+// keys) when not.
+const sent = [];
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (_url, init) => {
+  sent.push(JSON.parse(init.body));
+  return new Response(null, { status: 202 });
+};
+try {
+  const costly = createInstrumentation({ agentId: "cost-agent", team: "cost-team", serverUrl: UNREACHABLE_URL });
+  costly.toolCallEnd({ caller: "cost-agent", tool: "llm", status: "success", result: {}, tokensIn: 10, tokensOut: 20, costUsd: 0.5 });
+  costly.toolCallEnd({ caller: "cost-agent", tool: "plain", status: "success", result: {} });
+  costly.agentStop({ status: "success", costUsd: 1.25 });
+  await costly.withToolCall(
+    {
+      caller: "cost-agent",
+      tool: "wrapped",
+      input: {},
+      tokensIn: 1,
+      usage: (r) => ({ tokensOut: r.usage.out, costUsd: 0.01 }),
+    },
+    () => ({ usage: { out: 42 } }),
+  );
+  await costly.withToolCall(
+    { caller: "cost-agent", tool: "bad_usage", input: {}, usage: () => { throw new Error("nope"); } },
+    () => 1,
+  );
+
+  const [llmEnd, plainEnd, stop, , wrappedEnd, , badEnd] = sent;
+  assert.deepEqual([llmEnd.tokensIn, llmEnd.tokensOut, llmEnd.costUsd], [10, 20, 0.5]);
+  for (const key of ["tokensIn", "tokensOut", "costUsd"]) {
+    assert.equal(key in plainEnd, false, `${key} must be omitted when not supplied`);
+    assert.equal(key in badEnd, false, `${key} must be omitted when usage() throws`);
+  }
+  assert.equal(stop.type, "agent_stop");
+  assert.equal(stop.costUsd, 1.25);
+  assert.equal("tokensIn" in stop, false);
+  assert.equal(wrappedEnd.type, "tool_call_end");
+  assert.deepEqual([wrappedEnd.tokensIn, wrappedEnd.tokensOut, wrappedEnd.costUsd], [1, 42, 0.01]);
+  assert.equal(badEnd.status, "success");
+} finally {
+  globalThis.fetch = realFetch;
+}
+
 console.log("smoke test passed: all emitters are safe no-ops with no event server running");

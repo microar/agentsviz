@@ -180,7 +180,14 @@ async function main() {
     agentB.log("Agent B received task from Agent A, processing"),
   );
   await emit("agent_stop agent-b (success)", () =>
-    agentB.agentStop({ status: "success", message: "Summary produced" }),
+    agentB.agentStop({
+      status: "success",
+      message: "Summary produced",
+      // Token/cost accounting (#55) for agent-b's run as a whole.
+      tokensIn: 1200,
+      tokensOut: 300,
+      costUsd: 0.25,
+    }),
   );
 
   await emit("tool_call_end agent-a -> agent-b (success)", () =>
@@ -189,6 +196,9 @@ async function main() {
       tool: "agent-b",
       status: "success",
       result: { summary: "3 key findings" },
+      tokensIn: 40,
+      tokensOut: 10,
+      costUsd: 0.5,
     }),
   );
 
@@ -318,6 +328,35 @@ async function main() {
   assert(
     finalSnapshot.teams[team]?.includes(agentAId) && finalSnapshot.teams[team]?.includes(agentBId),
     `both agents are grouped under team "${team}" in the snapshot`,
+  );
+
+  // Token/cost (#55): fields supplied via instrumentation must survive
+  // validation, reach the live stream, and aggregate in snapshot.spend.
+  // The server persists to its default SQLite DB across runs, so team and
+  // session totals may include earlier runs — assert exact values only on
+  // this run's unique agentIds, and lower bounds on the rest.
+  const bStopEvent = receivedEvents.find((e) => e.type === "agent_stop" && e.agentId === agentBId);
+  assert(
+    bStopEvent?.tokensIn === 1200 && bStopEvent?.tokensOut === 300 && bStopEvent?.costUsd === 0.25,
+    "agent_stop cost fields pass through to the broadcast event",
+  );
+  const spend = finalSnapshot.spend;
+  assert(!!spend, "final snapshot carries a spend section");
+  assert(
+    spend?.byAgent?.[agentAId]?.tokensIn === 40 &&
+      spend?.byAgent?.[agentAId]?.tokensOut === 10 &&
+      spend?.byAgent?.[agentAId]?.costUsd === 0.5,
+    `agent-a spend reflects its tool_call_end cost (got ${JSON.stringify(spend?.byAgent?.[agentAId])})`,
+  );
+  assert(
+    spend?.byAgent?.[agentBId]?.tokensIn === 1200 &&
+      spend?.byAgent?.[agentBId]?.tokensOut === 300 &&
+      spend?.byAgent?.[agentBId]?.costUsd === 0.25,
+    `agent-b spend reflects its agent_stop cost (got ${JSON.stringify(spend?.byAgent?.[agentBId])})`,
+  );
+  assert(
+    (spend?.byTeam?.[team]?.costUsd ?? 0) >= 0.75 && (spend?.total?.costUsd ?? 0) >= 0.75,
+    `team "${team}" and session totals include this run's $0.75 (got team ${spend?.byTeam?.[team]?.costUsd}, total ${spend?.total?.costUsd})`,
   );
 
   // Log lines aren't part of the state snapshot (see store.ts: log/error

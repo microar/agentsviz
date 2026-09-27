@@ -14,6 +14,17 @@ export type EventType =
 
 export type Status = "success" | "error";
 
+/**
+ * Optional token/cost accounting (#55), allowed on `agent_stop` and
+ * `tool_call_end`. Each must be a non-negative finite number when present;
+ * omit a field entirely when unknown (the server sums whatever is sent).
+ */
+export interface CostFields {
+  tokensIn?: number;
+  tokensOut?: number;
+  costUsd?: number;
+}
+
 /** Fields shared by every event type. */
 interface BaseEvent {
   type: EventType;
@@ -28,7 +39,7 @@ export interface AgentStartEvent extends BaseEvent {
   caller?: string;
 }
 
-export interface AgentStopEvent extends BaseEvent {
+export interface AgentStopEvent extends BaseEvent, CostFields {
   type: "agent_stop";
   status: Status;
   message?: string;
@@ -41,7 +52,7 @@ export interface ToolCallStartEvent extends BaseEvent {
   input: Record<string, unknown>;
 }
 
-export interface ToolCallEndEvent extends BaseEvent {
+export interface ToolCallEndEvent extends BaseEvent, CostFields {
   type: "tool_call_end";
   caller: string;
   tool: string;

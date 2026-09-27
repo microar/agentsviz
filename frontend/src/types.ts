@@ -31,6 +31,27 @@ export interface LifecycleEvent {
   result?: unknown
   status?: EventStatus
   message?: string
+  /** Optional token/cost accounting (#55), on `agent_stop` / `tool_call_end` only. */
+  tokensIn?: number
+  tokensOut?: number
+  costUsd?: number
+}
+
+/** Running token/cost totals (#55). Mirrors `CostTotals` in server/src/store.ts. */
+export interface CostTotals {
+  tokensIn: number
+  tokensOut: number
+  costUsd: number
+}
+
+/**
+ * Aggregate spend by agent / team plus a session-wide total (#55). Mirrors
+ * `SpendSnapshot` in server/src/store.ts.
+ */
+export interface SpendState {
+  byAgent: Record<string, CostTotals>
+  byTeam: Record<string, CostTotals>
+  total: CostTotals
 }
 
 /**
@@ -48,6 +69,8 @@ export interface SnapshotMessage {
     agents: AgentState[]
     toolCalls: SnapshotToolCall[]
     teams: Record<string, string[]>
+    /** Absent from servers that predate #55 — treated as zero spend. */
+    spend?: SpendState
   }
 }
 

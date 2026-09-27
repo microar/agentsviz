@@ -50,6 +50,14 @@ export type AgentEvent =
       caller?: string;
       status: "success" | "error";
       message?: string;
+      // Optional token/cost accounting for the run as a whole (#55). See
+      // docs/event-schema.md's "Token/cost tracking" section — treated as
+      // an independent, additive contribution to the aggregate spend
+      // totals in server/src/store.ts, not reconciled against any
+      // tool_call_end totals for the same agent.
+      tokensIn?: number;
+      tokensOut?: number;
+      costUsd?: number;
     }
   | {
       type: "tool_call_start";
@@ -70,6 +78,11 @@ export type AgentEvent =
       status: "success" | "error";
       result?: unknown;
       message?: string;
+      // Optional per-call token/cost accounting (#55). See
+      // docs/event-schema.md's "Token/cost tracking" section.
+      tokensIn?: number;
+      tokensOut?: number;
+      costUsd?: number;
     }
   | {
       type: "log";
@@ -96,6 +109,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Non-negative finite number check shared by tokensIn/tokensOut/costUsd
+// (#55) — mirrors isNonEmptyString's role for string fields. Rejects
+// NaN/Infinity and negative values; a missing value is handled by the
+// `!== undefined` guard at each call site, not here.
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 // Basic ISO 8601 sanity check: must be parseable as a valid Date and
 // look like an ISO timestamp (not e.g. a bare number or arbitrary string).
 function isIsoTimestamp(value: unknown): value is string {
@@ -118,10 +139,8 @@ export function validateEvent(body: unknown): ValidationResult {
     return { valid: false, errors: ["Request body must be a JSON object."] };
   }
 
-  const { type, timestamp, agentId, team, caller, tool, input, status, message } = body as Record<
-    string,
-    unknown
-  >;
+  const { type, timestamp, agentId, team, caller, tool, input, status, message, tokensIn, tokensOut, costUsd } =
+    body as Record<string, unknown>;
 
   if (!isNonEmptyString(type) || !EVENT_TYPES.includes(type as EventType)) {
     errors.push(`"type" is required and must be one of: ${EVENT_TYPES.join(", ")}.`);
@@ -143,6 +162,21 @@ export function validateEvent(body: unknown): ValidationResult {
 
   if (caller !== undefined && !isNonEmptyString(caller)) {
     errors.push('"caller" must be a non-empty string when present.');
+  }
+
+  // tokensIn/tokensOut/costUsd (#55) are only meaningful on agent_stop and
+  // tool_call_end (see docs/event-schema.md), but format-validated here
+  // regardless of type — same treatment as team/caller above — so a
+  // misshapen value is rejected consistently rather than silently ignored
+  // on the "wrong" event type.
+  if (tokensIn !== undefined && !isNonNegativeFiniteNumber(tokensIn)) {
+    errors.push('"tokensIn" must be a non-negative finite number when present.');
+  }
+  if (tokensOut !== undefined && !isNonNegativeFiniteNumber(tokensOut)) {
+    errors.push('"tokensOut" must be a non-negative finite number when present.');
+  }
+  if (costUsd !== undefined && !isNonNegativeFiniteNumber(costUsd)) {
+    errors.push('"costUsd" must be a non-negative finite number when present.');
   }
 
   const eventType = type as EventType;

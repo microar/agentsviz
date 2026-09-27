@@ -51,7 +51,7 @@
  */
 
 import path from "node:path";
-import type { AgentEvent, HookPayload, Status } from "./types.js";
+import type { AgentEvent, CostFields, HookPayload, Status } from "./types.js";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -155,6 +155,104 @@ export function classifyToolResponse(response: unknown): {
   return { status: "success", result: response };
 }
 
+// --- Token/cost extraction (#55) -------------------------------------------
+//
+// Best-effort only. As of writing, Claude Code hook payloads do NOT carry
+// token usage or cost directly:
+//   - PostToolUse's `tool_response` is the tool's own output. Ordinary
+//     tools have no usage block; the Task/Agent tool's response may include
+//     the *sub-agent's* `usage`, but that's attributed to the sub-agent via
+//     its SubagentStop transcript instead (see below), so we deliberately
+//     skip it here to avoid double counting.
+//   - SessionEnd / SubagentStop carry no usage, but do carry a path to the
+//     JSONL transcript (`transcript_path` / `agent_transcript_path`), whose
+//     assistant entries have the Anthropic API `message.usage` block.
+//     index.ts reads that file and `summarizeTranscriptUsage` sums it — the
+//     one path that yields real token counts today.
+// Cost in USD is only filled in when a source actually reports it (e.g. a
+// `costUSD` / `total_cost_usd` field); we never estimate it from a price
+// table, since those drift and would present guesses as data.
+
+function nonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** Tools whose response usage belongs to a sub-agent, reported at SubagentStop. */
+const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
+
+/**
+ * Pulls tokensIn/tokensOut/costUsd out of an arbitrary object, if it
+ * carries an Anthropic-style `usage` block (`input_tokens`, `output_tokens`,
+ * plus cache read/creation input tokens, which count toward `tokensIn`) or
+ * a known cost field. Returns `{}` for anything unrecognized — never throws.
+ */
+export function extractUsage(value: unknown): CostFields {
+  if (!isPlainObject(value)) return {};
+  const out: CostFields = {};
+  const usage = isPlainObject(value.usage) ? value.usage : undefined;
+  if (usage) {
+    const inputParts = [
+      nonNegativeNumber(usage.input_tokens),
+      nonNegativeNumber(usage.cache_creation_input_tokens),
+      nonNegativeNumber(usage.cache_read_input_tokens),
+    ].filter((n): n is number => n !== undefined);
+    if (inputParts.length > 0) out.tokensIn = inputParts.reduce((a, b) => a + b, 0);
+    const output = nonNegativeNumber(usage.output_tokens);
+    if (output !== undefined) out.tokensOut = output;
+  }
+  const cost =
+    nonNegativeNumber(value.costUsd) ??
+    nonNegativeNumber(value.costUSD) ??
+    nonNegativeNumber(value.cost_usd) ??
+    nonNegativeNumber(value.total_cost_usd);
+  if (cost !== undefined) out.costUsd = cost;
+  return out;
+}
+
+function addCost(a: CostFields, b: CostFields): CostFields {
+  const out: CostFields = { ...a };
+  for (const key of ["tokensIn", "tokensOut", "costUsd"] as const) {
+    if (b[key] !== undefined) out[key] = (out[key] ?? 0) + b[key];
+  }
+  return out;
+}
+
+/**
+ * Sums token usage across a Claude Code JSONL transcript. Each assistant
+ * API response can be written as several lines (one per content block)
+ * sharing one `message.id` and repeating its usage, so entries are
+ * de-duplicated by that id (last line wins). Malformed lines are skipped.
+ * `excludeSidechain` drops `isSidechain: true` entries — sub-agent turns
+ * that older harness versions inline into the parent transcript and that
+ * are already counted at the sub-agent's own SubagentStop.
+ */
+export function summarizeTranscriptUsage(
+  jsonl: string,
+  options: { excludeSidechain?: boolean } = {},
+): CostFields {
+  const byMessageId = new Map<string, CostFields>();
+  let anonymous: CostFields = {};
+  for (const line of jsonl.split("\n")) {
+    if (!line.trim()) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isPlainObject(entry)) continue;
+    if (options.excludeSidechain && entry.isSidechain === true) continue;
+    const message = isPlainObject(entry.message) ? entry.message : undefined;
+    const usage = addCost(extractUsage(message), extractUsage({ costUSD: entry.costUSD }));
+    if (Object.keys(usage).length === 0) continue;
+    if (message && isNonEmptyString(message.id)) byMessageId.set(message.id, usage);
+    else anonymous = addCost(anonymous, usage);
+  }
+  let total = anonymous;
+  for (const usage of byMessageId.values()) total = addCost(total, usage);
+  return total;
+}
+
 function safeStringify(value: unknown): string | undefined {
   try {
     return JSON.stringify(value);
@@ -222,6 +320,7 @@ export function mapHookPayload(payload: HookPayload, now: () => string = () => n
         status,
         ...(status === "success" ? { result } : {}),
         ...(status === "error" ? { message } : {}),
+        ...(SUBAGENT_TOOLS.has(payload.tool_name) ? {} : extractUsage(payload.tool_response)),
       };
     }
 
@@ -240,6 +339,9 @@ export function mapHookPayload(payload: HookPayload, now: () => string = () => n
         ...(team ? { team } : {}),
         status: "success",
         message: "Session ended",
+        // No harness version we know of sends usage here — index.ts fills
+        // it from the transcript instead — but pick it up if one ever does.
+        ...extractUsage(payload),
       };
     }
 
@@ -257,6 +359,7 @@ export function mapHookPayload(payload: HookPayload, now: () => string = () => n
         caller: deriveCaller(payload),
         status: "success",
         message: "Subagent stopped",
+        ...extractUsage(payload),
       };
     }
 

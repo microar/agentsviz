@@ -118,6 +118,33 @@ Every emitter (`agentStart`, `agentStop`, `toolCallStart`, `toolCallEnd`,
 `log`, `error`, `withToolCall`) also accepts these as a per-call override
 on top of whatever was set via `configure()`.
 
+## Token/cost tracking (issue #55)
+
+`agentStop`, `toolCallEnd`, and `withToolCall` accept optional `tokensIn`,
+`tokensOut`, and `costUsd` (non-negative numbers). They're sent only when
+defined, so existing calls produce the same payloads as before. The
+dashboard's Spend tab sums them per agent, per team, and per session.
+
+```ts
+agentStop({ status: "success", tokensIn: 4200, tokensOut: 850, costUsd: 0.0623 });
+
+// Per call, derived from the wrapped call's result (e.g. an LLM response):
+const reply = await withToolCall(
+  {
+    caller: "researcher",
+    tool: "claude",
+    input: { prompt },
+    usage: (r) => ({ tokensIn: r.usage.input_tokens, tokensOut: r.usage.output_tokens }),
+  },
+  () => client.messages.create({ /* ... */ }),
+);
+```
+
+`usage` runs only on success; if it throws, the event is still sent
+without the derived fields. Report spend per call *or* once per run on
+`agentStop`, not both for the same tokens — consumers add every value
+they receive (see `docs/event-schema.md`).
+
 ## Safety guarantees
 
 - **Never blocks**: emitters return synchronously (or, for `withToolCall`,
