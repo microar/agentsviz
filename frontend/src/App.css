@@ -1138,3 +1138,86 @@
   background: var(--accent);
   border-radius: 0 4px 4px 0;
 }
+
+/* --- Metrics tab (issue #56) ---------------------------------------------- */
+
+.metrics-rate {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.metrics-rate .spend-bar-track {
+  flex: 1;
+  min-width: 50px;
+}
+
+.metrics-bar-error {
+  height: 8px;
+  background: #dc2626;
+  border-radius: 0 4px 4px 0;
+}
+
+.metrics-rate-value {
+  min-width: 5.5rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.metrics-rate-value.is-flaky {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.metrics-flaky-badge {
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border: 1px solid #dc2626;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+.metrics-stack {
+  display: flex;
+  height: 14px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(127, 127, 127, 0.15);
+}
+
+.metrics-seg--success { background: #16a34a; }
+.metrics-seg--error { background: #dc2626; }
+.metrics-seg--inferred { background: #d97706; }
+.metrics-seg--running { background: #6b7280; }
+
+.metrics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.metrics-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 0.35rem;
+  border-radius: 2px;
+}
+
+.metrics-outcome {
+  font-size: 0.8rem;
+}
+
+.metrics-outcome--error { color: #dc2626; }
+.metrics-outcome--inferred { color: #d97706; }
+
+.metrics-note,
+.metrics-stale-note {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #6b7280);
+}

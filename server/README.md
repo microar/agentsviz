@@ -99,6 +99,24 @@ curl -i -X POST http://localhost:4000/events \
   }'
 ```
 
+### `GET /metrics/summary`
+
+Pre-aggregated metrics (issue #56), token-gated like `/events/history`.
+Computed by the pure `computeMetrics` in `src/metrics.ts` from the
+`StateStore` snapshot (which is already the fold of the full persisted
+history, including `inferred` stale marks). Returns:
+
+- `agents` — `total`, `counts` and `rates` (share of all agents) for the
+  exclusive buckets `success`, `error`, `running`, `inferred` (stale).
+- `toolCalls` — overall `calls`, `completed`, `errors`, `errorRate`
+  (errors / completed) and `latencyMs` `{ p50, p95, p99 }`.
+- `byTool` — the same per tool name, busiest first.
+- `byAgent` — outcome bucket plus tool-call count / error rate per agent.
+
+Latency is `endedAt - startedAt` over completed calls only (nearest-rank
+percentiles); a call with no end event never counts toward it, and
+`latencyMs` is `null` when no call is measurable.
+
 ### `GET /health`
 
 Returns `200 OK` with `{ "status": "ok", "clients": <n> }` — useful for a

@@ -48,6 +48,7 @@ inputs/outputs (issue #52):
 |---|---|
 | `POST /events` | `Authorization: Bearer <token>` header (also accepts `X-API-Key`). |
 | `GET /events/history` | Same header. |
+| `GET /metrics/summary` | Same header. Derived aggregates only (not part of the event wire format). |
 | `WebSocket /ws` | `?token=<token>` query param on the handshake URL (browsers can't set handshake headers); the `Authorization` header also works for non-browser clients. |
 
 A missing or unrecognized token gets a clean `401`
