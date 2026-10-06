@@ -7,6 +7,7 @@ import { logEvent, getLogFilePath, pruneEventLogs } from "./eventLogger.js";
 import { EventRepository } from "./eventRepository.js";
 import { requestLogger } from "./logger.js";
 import { StateStore } from "./store.js";
+import { computeMetrics } from "./metrics.js";
 import { loadRedactionConfig, redactEvent } from "./redact.js";
 import {
   DEV_FALLBACK_TOKEN,
@@ -71,6 +72,7 @@ app.use((req: Request, res: Response, next: (err?: unknown) => void) => {
 // without the body being parsed. `/health` stays open (liveness only, no
 // agent data).
 app.use("/events", requireApiToken(ALLOWED_TOKENS));
+app.use("/metrics", requireApiToken(ALLOWED_TOKENS));
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 const httpServer = createServer(app);
@@ -215,6 +217,17 @@ app.get("/events/history", (_req: Request, res: Response) => {
     console.warn(`Failed to read event history (${logPath}):`, err);
     res.status(500).json({ error: "Failed to read event history" });
   }
+});
+
+// Pre-aggregated metrics (issue #56): agent outcome buckets, per-agent and
+// per-tool error rates, and tool-call latency percentiles. Summarizes the
+// live StateStore rather than re-reading the event log per request — that
+// store is already the fold of the full persisted history (replayed on
+// startup, then kept current per event) and already carries the liveness
+// sweep's `inferred` marks, so this stays a cheap in-memory pass. Raw
+// events remain available from /events/history.
+app.get("/metrics/summary", (_req: Request, res: Response) => {
+  res.status(200).json(computeMetrics(store.getSnapshot()));
 });
 
 // Fallback body-parser error handler (malformed JSON, oversized payloads).

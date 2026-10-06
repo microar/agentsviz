@@ -8,6 +8,8 @@ interface ImportMetaEnv {
    * fetch (issue #52). Defaults to the shared local-dev token when unset.
    */
   readonly VITE_AGENTSVIZ_TOKEN?: string
+  /** Overrides the default `GET /metrics/summary` URL the Metrics tab fetches (issue #56). */
+  readonly VITE_METRICS_URL?: string
 }
 
 interface ImportMeta {

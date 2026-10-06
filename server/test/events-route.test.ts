@@ -185,3 +185,16 @@ test("GET /events/history requires a token too (issue #52)", async () => {
   const body = await authed.json();
   assert.ok(Array.isArray(body), "history body should be a JSON array");
 });
+
+test("GET /metrics/summary requires a token and returns the aggregate JSON (#56)", async () => {
+  const unauth = await fetch(`${baseUrl}/metrics/summary`);
+  assert.equal(unauth.status, 401);
+
+  const res = await fetch(`${baseUrl}/metrics/summary`, { headers: authHeaders });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(typeof body.agents.total, "number");
+  assert.ok(Array.isArray(body.byTool));
+  assert.ok(Array.isArray(body.byAgent));
+  assert.ok("latencyMs" in body.toolCalls);
+});
